@@ -40,7 +40,8 @@ A web-based inventory management system developed to enhance my skills in **Node
 
 ## 📷 Badge
 
-![Inventory Management Badge](https://raw.githubusercontent.com/ricardohenrique1609/Fraude-detection/main/imagens/badge_estoque.png)
+https://raw.githubusercontent.com/ricardohenrique1609/Fraude-detection/main/imagens/badge_estoque.png
+
 
 ---
 
