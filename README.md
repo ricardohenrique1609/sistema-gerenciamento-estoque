@@ -40,7 +40,7 @@ A web-based inventory management system developed to enhance my skills in **Node
 
 ## 📷 Badge
 
-![Sistema de Estoque](https://img.shields.io/badge/Sistema%20de%20Estoque-%231D4ED8?style=for-the-badge&logo=archive&logoColor=white)
+![Inventory System](https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/badge_inventory.png)
 
 
 
