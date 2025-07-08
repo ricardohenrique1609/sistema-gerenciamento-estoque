@@ -37,9 +37,11 @@ A web-based inventory management system developed to enhance my skills in **Node
 - ✅ Fully responsive design for multiple devices.
 
 ---
-## 📷 Badge
+<h3>📷 Badge</h3>
 
-![Inventory System](https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/badge_inventary.png)
+<p align="left">
+  <img src="https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/badge_inventary.png" alt="Inventory System Badge" width="300"/>
+</p>
 
 ---
 
