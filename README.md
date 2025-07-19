@@ -6,11 +6,19 @@ A basic inventory management system designed to register, update, and control pr
 
 ## 📌 Project Structure
 
-📁 sistema-gerenciamento-estoque/  
-├── 📄 index.html  
-├── 📄 style.css  
-├── 📄 script.js  
-└── 📄 README.md  
+```plaintext
+/
+├── json/
+│   ├── package-lock.json
+│   ├── package.json
+├── public/
+│   ├── css/
+│   ├── html/
+│   └── js/
+│   .gitignore
+└── README.md
+```         ← ✅ CERTO!
+
 
 ---
 
@@ -59,7 +67,7 @@ A basic inventory management system designed to register, update, and control pr
 
 ## 📷 Badge
 
-<img src="https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/image_badge/badge_inventary.png" alt="Inventory System Badge" width="250"/>
+<img src="https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/image/badge_inventary.png" alt="Inventory System Badge" width="250"/>
 
 ---
 
