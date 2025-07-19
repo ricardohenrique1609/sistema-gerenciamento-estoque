@@ -66,8 +66,7 @@ A basic inventory management system designed to register, update, and control pr
 ## 👨‍💻 Author
 
 **Ricardo Henrique Ramos Silva**  
-[LinkedIn](https://linkedin.com/in/ricardo-henrique-28939b275) | [Portfolio](https://curriculoricardo.netlify.app/) | [GitHub](https://github.com/ricardohenrique1609)
-
+[LinkedIn](https://linkedin.com/in/ricardo-henrique-28939b275) | [Portfolio](https://curriculoricardo.netlify.app/) 
 ---
 
 ⭐️ If you like this project, feel free to leave a star!
