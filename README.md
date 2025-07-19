@@ -6,6 +6,8 @@ A basic inventory management system designed to register, update, and control pr
 
 ## 📌 Project Structure
 
+## 📌 Project Structure
+
 ```plaintext
 /
 ├── json/
