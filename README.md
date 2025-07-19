@@ -16,7 +16,7 @@ Inventary System/
 │   ├── html/
 │   └── js/
 │   .gitignore
-└── README.md         ← ✅ CERTO!
+└── README.md
 ```
 
 
