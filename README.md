@@ -18,9 +18,7 @@ A basic inventory management system designed to register, update, and control pr
 │   ├── html/
 │   └── js/
 │   .gitignore
-└── README.md
-```         ← ✅ CERTO!
-
+└── README.md         ← ✅ CERTO!
 
 ---
 
