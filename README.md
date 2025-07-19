@@ -59,7 +59,7 @@ A basic inventory management system designed to register, update, and control pr
 
 ## 📷 Badge
 
-<img src="https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/badge_inventary.png" alt="Inventory System Badge" width="250"/>
+<img src="https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/image_badge/badge_inventary.png" alt="Inventory System Badge" width="250"/>
 
 ---
 
