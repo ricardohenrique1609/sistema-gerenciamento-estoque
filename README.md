@@ -66,7 +66,7 @@ Inventory System/
 
 ## 📷 Badge
 
-<img src="https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/image/badge_inventory_system.png" alt="Inventory System Badge" width="250"/>
+<img src="https://raw.githubusercontent.com/ricardohenrique1609/sistema-gerenciamento-estoque/main/image/inventory_system.png" alt="Inventory System Badge" width="250"/>
 
 ---
 
