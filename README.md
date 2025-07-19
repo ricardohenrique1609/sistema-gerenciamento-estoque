@@ -7,7 +7,7 @@ A basic inventory management system designed to register, update, and control pr
 ## 📌 Project Structure
 
 ```plaintext
-Inventary System/
+Inventory System/
 ├── json/
 │   ├── package-lock.json
 │   ├── package.json
