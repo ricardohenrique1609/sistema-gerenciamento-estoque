@@ -1,1 +1,485 @@
 
+"""
+========================================
+GENERATE PREDICTIONS - V14 (COM HEADCOUNT OFICIAL)
+========================================
+Correções:
+1. Data de referência unificada
+2. Histórico REAL de hierarquia por andar/data
+3. Injeção de Headcount Oficial (RH)
+========================================
+"""
+import pandas as pd
+import numpy as np
+import joblib
+import json
+import os
+import re
+from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================================================
+# CONFIGURAÇÕES
+# ============================================================================
+HOLIDAYS = [
+    '2024-01-01', '2024-01-25', '2024-02-12', '2024-02-13', '2024-03-29',
+    '2024-05-01', '2024-05-30', '2024-07-09', '2024-09-07', '2024-10-12',
+    '2024-11-02', '2024-11-15', '2024-11-20', '2024-12-25',
+    '2025-01-01', '2025-01-25', '2025-03-03', '2025-03-04', '2025-04-18',
+    '2025-04-21', '2025-05-01', '2025-06-19', '2025-07-09', '2025-09-07',
+    '2025-10-12', '2025-11-02', '2025-11-15', '2025-11-20', '2025-12-25'
+]
+CAPACITY_DB = {
+    'conceicao_01': 208, 'conceicao_02': 180, 'conceicao_03': 184, 'conceicao_04': 194,
+    'conceicao_05': 162, 'conceicao_06': 162, 'conceicao_07': 162, 'conceicao_08': 162,
+    'conceicao_09': 162, 'conceicao_10': 190, 'conceicao_11': 192, 'conceicao_12': 188,
+    'conceicao_Mezanino': 150,
+    'jabaquara_02': 108, 'jabaquara_03': 152, 'jabaquara_04': 200, 'jabaquara_05': 200,
+    'jabaquara_06': 200, 'jabaquara_07': 220, 'jabaquara_08': 214, 'jabaquara_09': 200,
+    'jabaquara_10': 200, 'jabaquara_11': 200, 'jabaquara_12': 200,
+    'jabaquara_Mezanino': 150,
+    'walter_moreira_01': 204, 'walter_moreira_02': 200, 'walter_moreira_03': 200,
+    'walter_moreira_04': 160, 'walter_moreira_05': 200, 'walter_moreira_06': 198,
+    'walter_moreira_07': 200, 'walter_moreira_08': 200, 'walter_moreira_09': 200,
+    'walter_moreira_10': 200, 'walter_moreira_11': 200, 'walter_moreira_12': 200,
+    'walter_moreira_Mezanino': 150,
+    'olavo_setubal_01': 134, 'olavo_setubal_02': 164,
+    'olavo_setubal_03': 168, 'olavo_setubal_04': 164, 'olavo_setubal_05': 196,
+    'olavo_setubal_06': 108, 'olavo_setubal_07': 80, 'olavo_setubal_08': 66, 'olavo_setubal_09': 1,
+    'eudoro_villela_01': 114, 'eudoro_villela_03': 141, 'eudoro_villela_04': 153,
+    'eudoro_villela_05': 174, 'eudoro_villela_06': 150, 'eudoro_villela_07': 171,
+    'eudoro_villela_08': 165, 'eudoro_villela_09': 177, 'eudoro_villela_10': 210,
+    'eudoro_villela_11': 162, 'eudoro_villela_12': 186, 'eudoro_villela_13': 186,
+    'eudoro_villela_14': 162, 'eudoro_villela_15': 186,
+    'alfredo_egydio_01': 200, 'alfredo_egydio_02': 200, 'alfredo_egydio_03': 185,
+    'alfredo_egydio_04': 198, 'alfredo_egydio_05': 174, 'alfredo_egydio_06': 200,
+    'alfredo_egydio_07': 200, 'alfredo_egydio_08': 204, 'alfredo_egydio_09': 200,
+    'alfredo_egydio_10': 214, 'alfredo_egydio_11': 206, 'alfredo_egydio_12': 134,
+    'alfredo_egydio_Mezanino': 150, 'alfredo_egydio_00': 100,
+    'ctsp_01': 602, 'ctsp_02': 726, 'ctsp_03': 703, 'ctsp_04': 708, 'ctsp_05': 645,
+    'ctsp_07': 162, 'ctsp_08': 704, 'ctsp_09': 736, 'ctsp_10': 741,
+    'ctsp_Mezanino': 311, 'ctsp_00': 300,
+    'ibba_fl3400_03': 348, 'ibba_fl3400_04': 150, 'ibba_fl3400_06': 0, 'ibba_fl3400_07': 256,
+    'ibba_fl3500_02': 573, 'ibba_fl3500_03': 612, 'ibba_fl3500_04': 527, 'ibba_fl3500_05': 284,
+    'cea_01': 450, 'cea_-1': 274, 'cea_03': 461, 'cea_04': 294, 'cea_07': 592, 'cea_09': 165,
+    'cea_00': 400
+}
+BUILDING_NAMES = {
+    'conceicao': 'Torre Conceição',
+    'jabaquara': 'Torre Jabaquara',
+    'walter_moreira': 'Torre Walter Moreira',
+    'olavo_setubal': 'Torre Olavo Setúbal',
+    'alfredo_egydio': 'Torre Alfredo Egydio',
+    'eudoro_villela': 'Torre Eudoro Villela',
+    'ctsp': 'Centro Tecnológico',
+    'cea': 'Centro Empresarial Aço',
+    'ibba_fl3400': 'Faria Lima 3400',
+    'ibba_fl3500': 'Faria Lima 3500'
+}
+
+# ============================================================================
+# CLASSES AUXILIARES
+# ============================================================================
+class PredictionGenerator:
+    def __init__(self):
+        self.holidays = HOLIDAYS
+        self.day_names = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom']
+
+    def is_business_day(self, date):
+        if date.weekday() >= 5:
+            return False
+        if date.strftime('%Y-%m-%d') in self.holidays:
+            return False
+        return True
+
+    def next_business_days(self, start_date, n_days=10):
+        days = []
+        curr = start_date
+        while len(days) < n_days:
+            curr += timedelta(days=1)
+            if self.is_business_day(curr):
+                days.append(curr)
+        return days
+
+# ============================================================================
+# FUNÇÕES AUXILIARES
+# ============================================================================
+def clean_floor_label(raw_label):
+    if '_' in str(raw_label):
+        parts = str(raw_label).split('_')
+        candidate = parts[-1]
+        if candidate.isdigit():
+            return f"{int(candidate):02d}"
+        return candidate.title()
+    if str(raw_label).isdigit():
+        return f"{int(raw_label):02d}"
+    return str(raw_label).title()
+
+def get_building_info(floor_id):
+    parts = floor_id.split('_', 2)
+    base_key = parts[0]
+    if len(parts) > 1 and parts[1] in ['moreira', 'setubal', 'egydio', 'villela']:
+        base_key = f"{parts[0]}_{parts[1]}"
+    if 'fl3400' in floor_id.lower():
+        base_key = 'ibba_fl3400'
+    elif 'fl3500' in floor_id.lower():
+        base_key = 'ibba_fl3500'
+    building_name = BUILDING_NAMES.get(base_key, base_key.replace('_', ' ').title())
+    return base_key, building_name
+
+# ============================================================================
+# FUNÇÕES DE LEITURA DE HEADCOUNT OFICIAL (RH)
+# ============================================================================
+def identify_floor_id_from_rh(polo, local):
+    """
+    Converte strings do RH (Polo + Local) para o ID do sistema.
+    Ex: "ALFREDO EGYDIO / 07 AND" -> "alfredo_egydio_07"
+    """
+    # 1. Identifica o Prédio
+    b_key = None
+    full_str = (str(polo) + " " + str(local)).upper()
+
+    if '3400' in full_str: b_key = 'ibba_fl3400'
+    elif '3500' in full_str: b_key = 'ibba_fl3500'
+    elif 'ACO' in full_str: b_key = 'cea'
+    elif 'TECNOLOGICO' in full_str or ' CT ' in full_str: b_key = 'ctsp'
+    elif 'CONCEICAO' in full_str: b_key = 'conceicao'
+    elif 'JABAQUARA' in full_str: b_key = 'jabaquara'
+    elif 'ALFREDO' in full_str: b_key = 'alfredo_egydio'
+    elif 'WALTER' in full_str: b_key = 'walter_moreira'
+    elif 'OLAVO' in full_str: b_key = 'olavo_setubal'
+    elif 'EUDORO' in full_str: b_key = 'eudoro_villela'
+    
+    if not b_key: return None
+
+    # 2. Identifica o Andar
+    floor_str = None
+    
+    if 'MEZANINO' in full_str or ' MEZ ' in full_str: floor_str = 'Mezanino'
+    elif 'TERREO' in full_str or 'TÉRREO' in full_str: floor_str = '00'
+    else:
+        # Busca padrão: barra seguida de digitos, ou digitos seguidos de AND
+        match = re.search(r'/\s*(\d+)', str(local))
+        if not match:
+            match = re.search(r'(\d+)\s*(?:AND|º|°)', str(local))
+        
+        if match:
+            num = int(match.group(1))
+            floor_str = f"{num:02d}"
+
+    if not floor_str: return None
+
+    return f"{b_key}_{floor_str}"
+
+def load_official_headcount(csv_path='headcount_oficial.csv'):
+    """
+    Lê o CSV do RH e mapeia para o formato do App.
+    Retorna: { 'floor_id': { 'Nome do Depto': Quantidade } }
+    """
+    if not os.path.exists(csv_path):
+        print(f"⚠️  Arquivo {csv_path} não encontrado. Usando apenas dados de WiFi para Tetris.")
+        return {}
+
+    try:
+        df = pd.read_csv(csv_path)
+        headcount_map = {}
+
+        for _, row in df.iterrows():
+            floor_id = identify_floor_id_from_rh(row.get('Polo', ''), row.get('Local_Completo', ''))
+            
+            if not floor_id:
+                continue
+
+            dept_name = row.get('H5_Superintendencia', 'N/D')
+            try:
+                count = int(row.get('Total_Oficial', 0))
+            except:
+                count = 0
+
+            if floor_id not in headcount_map:
+                headcount_map[floor_id] = {}
+            
+            if dept_name not in headcount_map[floor_id]:
+                headcount_map[floor_id][dept_name] = 0
+                
+            headcount_map[floor_id][dept_name] += count
+            
+        print(f" ✅ Headcount oficial carregado para {len(headcount_map)} andares")
+        return headcount_map
+        
+    except Exception as e:
+        print(f" ❌ Erro ao ler CSV oficial: {e}")
+        return {}
+
+# ============================================================================
+# GERAÇÃO PRINCIPAL
+# ============================================================================
+def generate_predictions():
+    print("="*70)
+    print("🔮 GERAÇÃO DE PREVISÕES - V14 (COM HEADCOUNT RH)")
+    print("="*70)
+
+    # ========================================================================
+    # 1. CARREGA MODELOS E DADOS
+    # ========================================================================
+    print("\n[1/7] Carregando modelos e dados...")
+    try:
+        data_pack = joblib.load('model_floors.pkl')
+        models = data_pack['models']
+        stored_metrics = data_pack['metrics']
+        floor_profiles = data_pack.get('floor_profiles', {})
+        correction_factors = data_pack.get('correction_factors', {})
+
+        df_ml = pd.read_csv('data_ml_floors.csv')
+        df_ml['data'] = pd.to_datetime(df_ml['data'])
+
+        df_hier = pd.read_csv('data_hierarchy_daily.csv')
+        df_hier['data'] = pd.to_datetime(df_hier['data'])
+
+        with open('hierarchy_data.json', 'r', encoding='utf-8') as f:
+            hierarchy_data = json.load(f)
+        menu_tree = hierarchy_data['menu']
+        ratios_map = hierarchy_data['ratios']
+
+        # --- CARREGA DADOS OFICIAIS DO RH ---
+        official_data = load_official_headcount('headcount_oficial.csv')
+        # ------------------------------------
+
+        print(f" ✓ {len(models)} modelos carregados")
+        print(f" ✓ {len(df_ml):,} registros ML")
+        print(f" ✓ {len(df_hier):,} registros com hierarquia")
+    except Exception as e:
+        print(f" ❌ ERRO: {e}")
+        print(f"\n💡 Execute o pipeline completo:")
+        print(f" 1. python data_processor.py")
+        print(f" 2. python train_model.py")
+        exit(1)
+
+    # ========================================================================
+    # 2. DEFINE DATA DE REFERÊNCIA (AGORA: HOJE)
+    # ========================================================================
+    print("\n[2/7] Definindo data de referência...")
+    today_ref = pd.Timestamp(datetime.now().date())
+    reference_date = today_ref
+    print(f" ✓ Data de referência (hoje): {reference_date.strftime('%d/%m/%Y')}")
+
+    max_data_date = pd.to_datetime(df_ml['data']).max()
+    last_data_date = min(max_data_date, reference_date)
+    print(f" ✓ Último dia com dados ≤ hoje: {last_data_date.strftime('%d/%m/%Y')}")
+
+    df_ml = df_ml[df_ml['data'] <= reference_date].copy()
+    df_hier = df_hier[df_hier['data'] <= reference_date].copy()
+
+    # ========================================================================
+    # 3. PROCESSA HISTÓRICO DE HIERARQUIA
+    # ========================================================================
+    print("\n[3/7] Processando histórico de hierarquia...")
+    hierarchy_by_floor = {}
+    for _, row in df_hier.iterrows():
+        floor_id = row['floor_id']
+        date_str = row['data'].strftime('%Y-%m-%d')
+        h4, h5, h6 = row['h4'], row['h5'], row['h6']
+        pessoas = int(row['pessoas'])
+        if date_str in HOLIDAYS:
+            continue
+        if floor_id not in hierarchy_by_floor:
+            hierarchy_by_floor[floor_id] = {}
+        if date_str not in hierarchy_by_floor[floor_id]:
+            hierarchy_by_floor[floor_id][date_str] = {}
+        for level, vals, prefix in [
+            (['h4'], [h4], 'H4'),
+            (['h4', 'h5'], [h4, h5], 'H5'),
+            (['h4', 'h5', 'h6'], [h4, h5, h6], 'H6')
+        ]:
+            if all(v != 'NAO_IDENTIFICADO' for v in vals):
+                key = f"{prefix}:{('\n'.join(vals))}"
+                if key not in hierarchy_by_floor[floor_id][date_str]:
+                    hierarchy_by_floor[floor_id][date_str][key] = 0
+                hierarchy_by_floor[floor_id][date_str][key] += pessoas
+    print(f" ✓ {len(hierarchy_by_floor)} andares processados")
+
+    # ========================================================================
+    # 4. INICIALIZA ESTRUTURAS
+    # ========================================================================
+    print("\n[4/7] Inicializando estruturas...")
+    generator = PredictionGenerator()
+    output = {}
+    skipped = []
+
+    # ========================================================================
+    # 5. GERA PREVISÕES
+    # ========================================================================
+    print("\n[5/7] Gerando previsões...")
+    processed = 0
+    for floor_id, model in models.items():
+        b_key, b_name = get_building_info(floor_id)
+        f_label = clean_floor_label(floor_id)
+        c_factor = correction_factors.get(floor_id, 1.0)
+
+        df_floor = df_ml[df_ml['data'] == df_ml['data']][df_ml['floor_id'] == floor_id].sort_values('data')
+
+        if len(df_floor) == 0:
+            skipped.append(floor_id)
+            continue
+
+        # Histórico
+        historical = []
+        for _, row in df_floor.tail(30).iterrows():
+            date_str = row['data'].strftime('%Y-%m-%d')
+            if date_str in HOLIDAYS:
+                continue
+            hierarchy_data_day = hierarchy_by_floor.get(floor_id, {}).get(date_str, {})
+            historical.append({
+                'date': date_str,
+                'dayOfWeek': generator.day_names[row['data'].dayofweek],
+                'ocupacao': int(row['total_pessoas']),
+                'hierarchy': hierarchy_data_day
+            })
+
+        # Estado atual
+        ref_data = df_floor[df_floor['data'] == last_data_date]
+        if len(ref_data) == 0:
+            last_row = df_floor.iloc[-1]
+        else:
+            last_row = ref_data.iloc[-1]
+
+        current_occupancy = int(last_row['total_pessoas'])
+        lag_1 = float(last_row['total_pessoas'])
+        lag_2 = float(last_row.get('lag_1d', lag_1))
+        lag_7 = float(last_row.get('lag_7d', lag_1))
+        roll_7 = float(last_row.get('rolling_7d', lag_1))
+
+        # Previsão
+        forecast_days = []
+        business_days = generator.next_business_days(reference_date, n_days=10)
+        for future_date in business_days:
+            dia_sem = future_date.weekday()
+            media_dia = floor_profiles.get(floor_id, {}).get(dia_sem, 0)
+
+            input_data = pd.DataFrame([{
+                'dia_semana': dia_sem,
+                'mes': future_date.month,
+                'lag_1d': lag_1,
+                'lag_2d': lag_2,
+                'lag_7d': lag_7,
+                'rolling_7d': roll_7,
+                'media_dia_semana': media_dia
+            }])
+
+            raw_pred = float(max(0, model.predict(input_data)[0]))
+            pred = raw_pred * c_factor
+
+            if media_dia > 0 and pred > media_dia * 1.5:
+                pred = (pred + media_dia) / 2
+
+            final_val = int(round(pred))
+            forecast_days.append({
+                'date': future_date.strftime('%Y-%m-%d'),
+                'dayOfWeek': generator.day_names[dia_sem],
+                'predictedCount': final_val
+            })
+
+            lag_2, lag_1 = lag_1, pred
+            roll_7 = (roll_7 * 6 + pred) / 7
+
+        # Monta estrutura de saída
+        if b_key not in output:
+            output[b_key] = {
+                'name': b_name,
+                'floors': {}
+            }
+
+        capacity = CAPACITY_DB.get(floor_id, 100)
+        stats_obj = stored_metrics.get(floor_id, {})
+        stats_obj['capacity'] = int(capacity)
+        stats_obj['hierarchy_ratios'] = ratios_map.get(floor_id, {})
+        
+        # --- INJEÇÃO DO DADO OFICIAL ---
+        stats_obj['official_headcount'] = official_data.get(floor_id, {})
+        # -------------------------------
+
+        output[b_key]['floors'][f_label] = {
+            'floor_number': f_label,
+            'current_ocupacao': current_occupancy,
+            'historical': historical,
+            'forecast': forecast_days,
+            'stats': stats_obj
+        }
+
+        processed += 1
+        if processed % 20 == 0:
+            print(f" ✓ {processed}/{len(models)} processados...")
+    print(f" ✓ {processed} andares processados")
+
+    # ========================================================================
+    # 6. HIERARQUIA GLOBAL
+    # ========================================================================
+    print("\n[6/7] Adicionando hierarquia global...")
+    hierarchy_history = {}
+    for _, row in df_hier.iterrows():
+        date_str = row['data'].strftime('%Y-%m-%d')
+        if date_str in HOLIDAYS:
+            continue
+        floor_id = row['floor_id']
+        h4, h5, h6 = row['h4'], row['h5'], row['h6']
+        pessoas = int(row['pessoas'])
+        for level, vals, prefix in [
+            (['h4'], [h4], 'H4'),
+            (['h4', 'h5'], [h4, h5], 'H5'),
+            (['h4', 'h5', 'h6'], [h4, h5, h6], 'H6')
+        ]:
+            if all(v != 'NAO_IDENTIFICADO' for v in vals):
+                key = f"{prefix}:{('\n'.join(vals))}"
+                if key not in hierarchy_history:
+                    hierarchy_history[key] = {}
+                if date_str not in hierarchy_history[key]:
+                    hierarchy_history[key][date_str] = {}
+                if floor_id not in hierarchy_history[key][date_str]:
+                    hierarchy_history[key][date_str][floor_id] = 0
+                hierarchy_history[key][date_str][floor_id] += pessoas
+    print(f" ✓ {len(hierarchy_history)} chaves hierárquicas")
+
+    # ========================================================================
+    # 7. MONTA JSON FINAL
+    # ========================================================================
+    print("\n[7/7] Montando JSON final...")
+    final_json = {
+        "buildings": output,
+        "hierarchy_menu": menu_tree,
+        "hierarchy_history": hierarchy_history,
+        "metadata": {
+            "reference_date": reference_date.strftime('%Y-%m-%d'),
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "data_source": "REAL"
+        }
+    }
+    with open('predicoes.json', 'w', encoding='utf-8') as f:
+        json.dump(final_json, f, indent=2, ensure_ascii=False)
+    print(f" ✅ JSON salvo: predicoes.json")
+
+    # ========================================================================
+    # RESUMO
+    # ========================================================================
+    print("\n" + "="*70)
+    print("✅ GERAÇÃO CONCLUÍDA!")
+    print("="*70)
+    print(f"\n📊 Resumo:")
+    print(f" Data: {reference_date.strftime('%d/%m/%Y')}")
+    print(f" Prédios: {len(output)}")
+    print(f" Andares: {sum(len(b['floors']) for b in output.values())}")
+    print("\n🚀 Próximo passo:")
+    print(" python server.py")
+    print("="*70 + "\n")
+
+if __name__ == "__main__":
+    try:
+        generate_predictions()
+    except KeyboardInterrupt:
+        print("\n\n⚠️ Interrompido")
+        exit(1)
+    except Exception as e:
+        print(f"\n\n❌ ERRO: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
