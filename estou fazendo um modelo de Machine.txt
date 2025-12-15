@@ -1,0 +1,3416 @@
+estou fazendo um modelo de Machine Learning para prever a ocupação dos andares dos prédios do itau, pense como um cientista de dados para resolver esses problemas atuais que vou te passar:
+
+meu código atual de data_processor_floor faz o processamento dos dados e entrega uma base para o outro arquivo train_model treinar
+<data_processor>"""
+========================================
+DATA PROCESSOR FLOOR - v1.0
+========================================
+✅ Processa dados por ANDAR (não por prédio)
+✅ Parser robusto para nomes de andar
+✅ Mínimo 200 dias por andar
+✅ Remove Faria Lima 3400
+✅ Clima real via Open-Meteo
+========================================
+"""
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import warnings
+import openmeteo_requests
+import requests_cache
+from retry_requests import retry
+import re
+warnings.filterwarnings('ignore')
+
+class FloorOccupationProcessor:
+    
+    def __init__(self):
+        self.df_processed = None
+        self.filepath = None
+        
+        # Mapeamento de filial para prédio base
+        self.filial_mapping = {
+           'AC - IBBA FL3500 (SP)': 'ibba_fl3500',
+           'AC - Centro Empresarial (SP)': 'centro_empresarial',
+           'AC - CEA (SP)': 'cea',
+           'AC - CTSP (SP)': 'ctsp'
+        }
+        
+        # Capacidades por andar (fornecidas pelo usuário)
+        self.floor_capacities = {
+            # Torre Conceição
+            'centro_empresarial_conceicao_01': 208,
+            'centro_empresarial_conceicao_02': 180,
+            'centro_empresarial_conceicao_03': 184,
+            'centro_empresarial_conceicao_04': 194,
+            'centro_empresarial_conceicao_05': 162,
+            'centro_empresarial_conceicao_06': 162,
+            'centro_empresarial_conceicao_07': 162,
+            'centro_empresarial_conceicao_08': 162,
+            'centro_empresarial_conceicao_09': 162,
+            'centro_empresarial_conceicao_10': 190,
+            'centro_empresarial_conceicao_11': 192,
+            'centro_empresarial_conceicao_12': 188,
+            
+            # Torre Jabaquara
+            'centro_empresarial_jabaquara_02': 108,
+            'centro_empresarial_jabaquara_03': 152,
+            'centro_empresarial_jabaquara_04': 200,
+            'centro_empresarial_jabaquara_05': 200,
+            'centro_empresarial_jabaquara_06': 200,
+            'centro_empresarial_jabaquara_07': 220,
+            'centro_empresarial_jabaquara_08': 214,
+            'centro_empresarial_jabaquara_09': 200,
+            'centro_empresarial_jabaquara_10': 200,
+            'centro_empresarial_jabaquara_11': 200,
+            'centro_empresarial_jabaquara_12': 200,
+            
+            # Torre Walther (WMS)
+            'centro_empresarial_wms_01': 204,
+            'centro_empresarial_wms_02': 200,
+            'centro_empresarial_wms_03': 200,
+            'centro_empresarial_wms_04': 160,
+            'centro_empresarial_wms_05': 200,
+            'centro_empresarial_wms_06': 198,
+            'centro_empresarial_wms_07': 200,
+            'centro_empresarial_wms_08': 200,
+            'centro_empresarial_wms_09': 200,
+            'centro_empresarial_wms_10': 200,
+            'centro_empresarial_wms_11': 200,
+            'centro_empresarial_wms_12': 200,
+            
+            # Torre Olavo Setúbal
+            'centro_empresarial_olavo_setubal_00': 63,
+            'centro_empresarial_olavo_setubal_01': 134,
+            'centro_empresarial_olavo_setubal_02': 164,
+            'centro_empresarial_olavo_setubal_03': 168,
+            'centro_empresarial_olavo_setubal_04': 164,
+            'centro_empresarial_olavo_setubal_05': 196,
+            'centro_empresarial_olavo_setubal_06': 108,
+            'centro_empresarial_olavo_setubal_07': 80,
+            'centro_empresarial_olavo_setubal_09': 0,
+            
+            # Torre Eudoro Villela
+            'centro_empresarial_eudoro_villela_01': 114,
+            'centro_empresarial_eudoro_villela_03': 141,
+            'centro_empresarial_eudoro_villela_04': 153,
+            'centro_empresarial_eudoro_villela_05': 174,
+            'centro_empresarial_eudoro_villela_06': 150,
+            'centro_empresarial_eudoro_villela_07': 171,
+            'centro_empresarial_eudoro_villela_08': 165,
+            'centro_empresarial_eudoro_villela_09': 177,
+            'centro_empresarial_eudoro_villela_10': 210,
+            'centro_empresarial_eudoro_villela_11': 162,
+            'centro_empresarial_eudoro_villela_12': 186,
+            'centro_empresarial_eudoro_villela_13': 186,
+            'centro_empresarial_eudoro_villela_14': 162,
+            'centro_empresarial_eudoro_villela_15': 186,
+            
+            # Torre Alfredo Egydio
+            'centro_empresarial_alfredo_egydio_01': 200,
+            'centro_empresarial_alfredo_egydio_02': 200,
+            'centro_empresarial_alfredo_egydio_03': 185,
+            'centro_empresarial_alfredo_egydio_04': 198,
+            'centro_empresarial_alfredo_egydio_05': 174,
+            'centro_empresarial_alfredo_egydio_06': 200,
+            'centro_empresarial_alfredo_egydio_07': 200,
+            'centro_empresarial_alfredo_egydio_08': 204,
+            'centro_empresarial_alfredo_egydio_09': 200,
+            'centro_empresarial_alfredo_egydio_10': 214,
+            'centro_empresarial_alfredo_egydio_11': 206,
+            'centro_empresarial_alfredo_egydio_12': 134,
+            
+            # Centro Tecnológico
+            'ctsp_centro_tecnologico_01': 602,
+            'ctsp_centro_tecnologico_02': 726,
+            'ctsp_centro_tecnologico_03': 703,
+            'ctsp_centro_tecnologico_04': 708,
+            'ctsp_centro_tecnologico_05': 645,
+            'ctsp_centro_tecnologico_07': 162,
+            'ctsp_centro_tecnologico_08': 704,
+            'ctsp_centro_tecnologico_09': 736,
+            'ctsp_centro_tecnologico_10': 741,
+            'ctsp_centro_tecnologico_mez': 310,
+            
+            # Faria Lima 3500
+            'ibba_fl3500 2 andar': 573,
+            'ibba_fl3500_fl3500_03': 612,
+            'ibba_fl3500_fl3500_04': 527,
+            'ibba_fl3500_fl3500_05': 284,
+            
+            # Centro Empresarial Aço
+            'cea_cea_01': 450,
+            'cea_cea_n1': 274,  # -1 andar
+            'cea_cea_03': 461,
+            'cea_cea_04': 294,
+            'cea_cea_07': 592,
+            'cea_cea_09': 165,
+        }
+    
+    def parse_floor_name(self, filial, floor_str):
+        """
+        Parser robusto para extrair torre e andar
+        Retorna: (building_key, floor_key, tower_name, floor_number)
+        """
+        if pd.isna(floor_str) or not isinstance(floor_str, str):
+            return None, None, None, None
+        
+        floor_str = floor_str.strip().upper()
+        
+        # Mapear filial para building
+        building = self.filial_mapping.get(filial)
+        if not building:
+            return None, None, None, None
+        
+        # --- CENTRO EMPRESARIAL ---
+        if building == 'centro_empresarial':
+            # Padrões: "CONCEICAO / 01 AND", "WMS / 02 AND", etc
+            patterns = [
+                (r'CONCEICAO\s*/\s*(\d+)\s*AND', 'conceicao'),
+                (r'JABAQUARA\s*/\s*(\d+)\s*AND', 'jabaquara'),
+                (r'WMS\s*/\s*(\d+)\s*AND', 'wms'),
+                (r'OLAVO\s*SETUBAL\s*/\s*(\d+)\s*AND', 'olavo_setubal'),
+                (r'EUDORO\s*VILLELA\s*/\s*(\d+)\s*AND', 'eudoro_villela'),
+                (r'ALFREDO\s*EGYDIO\s*/\s*(\d+)\s*AND', 'alfredo_egydio'),
+                # Térreo/Mezanino/etc
+                (r'CONCEICAO\s*/\s*MEZ', 'conceicao', 'mez'),
+                (r'CONCEICAO\s*/\s*PM', 'conceicao', 'pm'),
+                (r'OLAVO\s*SETUBAL\s*/\s*TERREO', 'olavo_setubal', 'terreo'),
+            ]
+            
+            for pattern in patterns:
+                if len(pattern) == 2:
+                    regex, tower = pattern
+                    match = re.search(regex, floor_str)
+                    if match:
+                        floor_num = match.group(1).zfill(2)
+                        floor_key = f"{building}_{tower}_{floor_num}"
+                        return building, floor_key, tower, floor_num
+                else:
+                    regex, tower, special = pattern
+                    if re.search(regex, floor_str):
+                        floor_key = f"{building}_{tower}_{special}"
+                        return building, floor_key, tower, special
+        
+        # --- CENTRO TECNOLÓGICO ---
+        elif building == 'ctsp':
+            match = re.search(r'CENTRO\s*TECNOLOGICO\s*/\s*(\d+)\s*AND', floor_str)
+            if match:
+                floor_num = match.group(1).zfill(2)
+                floor_key = f"ctsp_centro_tecnologico_{floor_num}"
+                return building, floor_key, 'centro_tecnologico', floor_num
+            
+            if 'MEZ INTER' in floor_str or 'MEZANINO' in floor_str:
+                floor_key = 'ctsp_centro_tecnologico_mez'
+                return building, floor_key, 'centro_tecnologico', 'mez'
+            
+            if 'TERREO' in floor_str:
+                floor_key = 'ctsp_centro_tecnologico_terreo'
+                return building, floor_key, 'centro_tecnologico', 'terreo'
+        
+        # --- FARIA LIMA 3500 ---
+        elif building == 'ibba_fl3500':
+            match = re.search(r'FL3500\s*/\s*(\d+)\s*ANDAR', floor_str)
+            if match:
+                floor_num = match.group(1).zfill(2)
+                floor_key = f"ibba_fl3500_fl3500_{floor_num}"
+                return building, floor_key, 'fl3500', floor_num
+            
+            if 'TERREO' in floor_str:
+                floor_key = 'ibba_fl3500_fl3500_terreo'
+                return building, floor_key, 'fl3500', 'terreo'
+        
+        # --- CENTRO EMPRESARIAL AÇO ---
+        elif building == 'cea':
+            match = re.search(r'CEA\s*(\d+)\s*ANDAR', floor_str)
+            if match:
+                floor_num = match.group(1).zfill(2)
+                floor_key = f"cea_cea_{floor_num}"
+                return building, floor_key, 'cea', floor_num
+            
+            # -1 andar
+            if 'CEA 1 ANDAR TORRE' in floor_str or 'CEA -1' in floor_str:
+                floor_key = 'cea_cea_n1'
+                return building, floor_key, 'cea', '-1'
+        
+        return None, None, None, None
+    
+    def set_filepath(self, filepath):
+        self.filepath = filepath
+        print(f"📂 Arquivo de dados definido: {filepath}")
+
+    def clean_and_aggregate_chunks(self, chunksize=2000000):
+        print(f"\n📊 Processando dados POR ANDAR (chunks de {chunksize:,})...")
+        
+        cols_to_use = ['data_marcacao', 'tipo_acesso', 'filial_tratado', 
+                       'cod_funcionario', 'right_descricao_local_departamento']
+        results = []
+        chunk_num = 1
+        total_registros_originais = 0
+        total_registros_apos_dedup = 0
+        
+        try:
+            try:
+                reader = pd.read_csv(self.filepath, usecols=cols_to_use, 
+                                    chunksize=chunksize, low_memory=False, encoding='utf-8')
+            except UnicodeDecodeError:
+                reader = pd.read_csv(self.filepath, usecols=cols_to_use, 
+                                    chunksize=chunksize, low_memory=False, encoding='latin-1')
+        except FileNotFoundError:
+            print(f"❌ ERRO: Arquivo '{self.filepath}' não encontrado!")
+            return None
+        
+        for chunk in reader:
+            print(f"   🌀 Processando Lote {chunk_num}...")
+            
+            chunk.columns = chunk.columns.str.strip()
+            registros_antes = len(chunk)
+            
+            # Converter data
+            chunk['data'] = pd.to_datetime(chunk['data_marcacao'], format='%Y%m%d', errors='coerce')
+            chunk = chunk.dropna(subset=['data'])
+            
+            # Filtrar entradas
+            chunk['tipo_acesso'] = chunk['tipo_acesso'].str.strip().str.lower().replace({'saída': 'saida'})
+            chunk = chunk[chunk['tipo_acesso'] == 'entrada']
+            
+            # Parse de andar
+            chunk['building'], chunk['floor_key'], chunk['tower'], chunk['floor_num'] = zip(
+                *chunk.apply(lambda row: self.parse_floor_name(
+                    row['filial_tratado'], 
+                    row['right_descricao_local_departamento']
+                ), axis=1)
+            )
+            
+            chunk = chunk.dropna(subset=['floor_key'])
+            
+            # Remove duplicatas
+            chunk_antes_dedup = len(chunk)
+            chunk = chunk.drop_duplicates(subset=['data', 'floor_key', 'cod_funcionario'], keep='first')
+            registros_depois = len(chunk)
+            
+            duplicatas = chunk_antes_dedup - registros_depois
+            if duplicatas > 0:
+                print(f"      📉 Duplicatas removidas: {duplicatas:,}")
+            
+            total_registros_originais += registros_antes
+            total_registros_apos_dedup += registros_depois
+            
+            # Contar por andar
+            chunk_agg = chunk.groupby(['data', 'floor_key', 'building'])['cod_funcionario'].nunique().reset_index()
+            chunk_agg.columns = ['data', 'floor_key', 'building', 'ocupacao_media_dia']
+            
+            results.append(chunk_agg)
+            chunk_num += 1
+        
+        if not results:
+            print("❌ Nenhum dado válido encontrado.")
+            return None
+        
+        print(f"\n   ✅ {chunk_num-1} lotes processados")
+        print(f"   📊 Registros originais: {total_registros_originais:,}")
+        print(f"   📊 Duplicatas removidas: {total_registros_originais - total_registros_apos_dedup:,}")
+        
+        df_agg = pd.concat(results, ignore_index=True)
+        df_final = df_agg.groupby(['data', 'floor_key', 'building'])['ocupacao_media_dia'].sum().reset_index()
+        
+        # Filtrar andares com mínimo 200 dias
+        print(f"\n   🔍 Filtrando andares com mínimo 200 dias...")
+        floor_counts = df_final.groupby('floor_key').size()
+        valid_floors = floor_counts[floor_counts >= 200].index
+        
+        print(f"      • Total de andares únicos: {len(floor_counts)}")
+        print(f"      • Andares com ≥200 dias: {len(valid_floors)}")
+        print(f"      • Andares removidos: {len(floor_counts) - len(valid_floors)}")
+        
+        df_final = df_final[df_final['floor_key'].isin(valid_floors)]
+        
+        # Adicionar info temporal
+        df_final['dia_semana'] = df_final['data'].dt.dayofweek
+        df_final['dia_mes'] = df_final['data'].dt.day
+        df_final['mes'] = df_final['data'].dt.month
+        df_final['ano'] = df_final['data'].dt.year
+        df_final['dia_ano'] = df_final['data'].dt.dayofyear
+        df_final['semana_ano'] = df_final['data'].dt.isocalendar().week
+        
+        self.df_processed = df_final.sort_values(['floor_key', 'data'])
+        
+        print(f"\n✅ Processamento concluído:")
+        print(f"   📊 {len(df_final):,} registros")
+        print(f"   🏢 {len(valid_floors)} andares válidos")
+        print(f"   📅 Período: {df_final['data'].min().date()} até {df_final['data'].max().date()}")
+        
+        return self.df_processed
+    
+    def buscar_clima_real(self, df):
+        """Busca clima via Open-Meteo API"""
+        print("\n🌤️ Buscando clima real (Open-Meteo)...")
+        
+        try:
+            cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
+            retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
+            openmeteo = openmeteo_requests.Client(session=retry_session)
+            
+            url = "https://api.open-meteo.com/v1/forecast"
+            params = {
+                "latitude": -23.5475,
+                "longitude": -46.6361,
+                "daily": ["temperature_2m_mean", "precipitation_sum"],
+                "timezone": "America/Sao_Paulo",
+                "past_days": 92,
+                "forecast_days": 16
+            }
+            
+            responses = openmeteo.weather_api(url, params=params)
+            response = responses[0]
+            
+            daily = response.Daily()
+            daily_temperature = daily.Variables(0).ValuesAsNumpy()
+            daily_rain = daily.Variables(1).ValuesAsNumpy()
+            
+            clima_df = pd.DataFrame({
+                'data': pd.date_range(
+                    start=pd.to_datetime(daily.Time(), unit="s", utc=True),
+                    end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
+                    freq=pd.Timedelta(seconds=daily.Interval()),
+                    inclusive="left"
+                ),
+                'temperatura': daily_temperature,
+                'precipitacao': daily_rain
+            })
+            
+            clima_df['data'] = clima_df['data'].dt.tz_convert('America/Sao_Paulo').dt.tz_localize(None)
+            clima_df['data'] = pd.to_datetime(clima_df['data'].dt.date)
+            df['data'] = pd.to_datetime(df['data'].dt.date)
+            
+            clima_df['chuva'] = (clima_df['precipitacao'] > 1.0).astype(int)
+            
+            df = df.merge(clima_df[['data', 'temperatura', 'chuva']], on='data', how='left')
+            df['temperatura'] = df['temperatura'].fillna(df['temperatura'].mean())
+            df['chuva'] = df['chuva'].fillna(0)
+            
+            print(f"   ✅ Clima obtido para {(~df['temperatura'].isna()).sum():,} dias")
+            return df, True
+            
+        except Exception as e:
+            print(f"   ⚠️ Erro: {e}. Usando dados simulados.")
+            df['temperatura'] = 25 + 5 * np.sin(df['mes'] * np.pi / 6) + np.random.normal(0, 2, len(df))
+            df['chuva'] = np.random.choice([0, 1], size=len(df), p=[0.7, 0.3])
+            return df, False
+    
+    def add_features(self):
+        """Cria features para ML"""
+        if self.df_processed is None or self.df_processed.empty:
+            return pd.DataFrame()
+        
+        print("\n✨ Criando features de ML...")
+        df = self.df_processed.copy()
+        
+        df, clima_ok = self.buscar_clima_real(df)
+        
+        # Feriados brasileiros
+        feriados_br = pd.to_datetime([
+            '2024-01-01', '2024-02-13', '2024-03-29', '2024-04-21', '2024-05-01',
+            '2024-05-30', '2024-09-07', '2024-10-12', '2024-11-01', '2024-11-02',
+            '2024-11-15', '2024-11-20', '2024-12-25', '2024-12-31',
+            '2025-01-01', '2025-03-03', '2025-03-04', '2025-04-18', '2025-04-21',
+            '2025-05-01', '2025-06-19', '2025-09-07', '2025-10-12', '2025-11-01',
+            '2025-11-02', '2025-11-15', '2025-11-20', '2025-12-25', '2025-12-31'
+        ])
+        
+        df['feriado'] = df['data'].isin(feriados_br).astype(int)
+        df['feriado_ontem'] = df.groupby('floor_key')['feriado'].shift(1).fillna(0).astype(int)
+        df['feriado_amanha'] = df.groupby('floor_key')['feriado'].shift(-1).fillna(0).astype(int)
+        df['eh_emendado'] = ((df['feriado_ontem'] == 1) | (df['feriado_amanha'] == 1)).astype(int)
+        df['evento_especial'] = 0
+        
+        # Features temporais
+        df['eh_fds'] = df['dia_semana'].isin([5, 6]).astype(int)
+        df['eh_segunda'] = (df['dia_semana'] == 0).astype(int)
+        df['eh_sexta'] = (df['dia_semana'] == 4).astype(int)
+        df['eh_meio_semana'] = df['dia_semana'].isin([1, 2, 3]).astype(int)
+        
+        # Encoding cíclico
+        df['dia_ano_sin'] = np.sin(2 * np.pi * df['dia_ano'] / 365)
+        df['dia_ano_cos'] = np.cos(2 * np.pi * df['dia_ano'] / 365)
+        df['dia_semana_sin'] = np.sin(2 * np.pi * df['dia_semana'] / 7)
+        df['dia_semana_cos'] = np.cos(2 * np.pi * df['dia_semana'] / 7)
+        
+        # LAGs
+        print("   📊 Criando lags (1, 2, 7, 14 dias)...")
+        for lag in [1, 2, 7, 14]:
+            df[f'ocupacao_lag_{lag}d'] = df.groupby('floor_key')['ocupacao_media_dia'].shift(lag)
+        
+        # Rolling
+        df['ocupacao_media_7d'] = df.groupby('floor_key')['ocupacao_media_dia'].shift(1).rolling(window=7, min_periods=1).mean().reset_index(level=0, drop=True)
+        df['ocupacao_media_30d'] = df.groupby('floor_key')['ocupacao_media_dia'].shift(1).rolling(window=30, min_periods=1).mean().reset_index(level=0, drop=True)
+        df['ocupacao_std_7d'] = df.groupby('floor_key')['ocupacao_media_dia'].shift(1).rolling(window=7, min_periods=1).std().reset_index(level=0, drop=True)
+        
+        # Tendências
+        df['tendencia_diaria'] = df['ocupacao_lag_1d'] - df['ocupacao_lag_2d']
+        df['taxa_crescimento_semanal'] = (df['ocupacao_lag_1d'] - df['ocupacao_lag_7d']) / (df['ocupacao_lag_7d'] + 1)
+        
+        self.df_processed = df
+        print(f"✅ Features criadas. Colunas: {len(df.columns)}")
+        return df
+    
+    def prepare_ml_dataset(self):
+        if self.df_processed is None or self.df_processed.empty:
+            return pd.DataFrame()
+        
+        print("\n🎯 Preparando dataset para ML...")
+        df = self.df_processed.copy()
+        
+        df['target_ocupacao'] = df.groupby('floor_key')['ocupacao_media_dia'].shift(-1)
+        df = df.dropna(subset=['target_ocupacao', 'ocupacao_lag_14d'])
+        
+        feature_cols = [
+            'dia_semana', 'dia_mes', 'mes', 'semana_ano', 'dia_ano',
+            'dia_ano_sin', 'dia_ano_cos', 'dia_semana_sin', 'dia_semana_cos',
+            'temperatura', 'chuva', 
+            'feriado', 'feriado_ontem', 'feriado_amanha', 'eh_emendado', 'evento_especial',
+            'eh_fds', 'eh_segunda', 'eh_sexta', 'eh_meio_semana',
+            'ocupacao_lag_1d', 'ocupacao_lag_2d', 'ocupacao_lag_7d', 'ocupacao_lag_14d',
+            'ocupacao_media_7d', 'ocupacao_media_30d', 'ocupacao_std_7d',
+            'tendencia_diaria', 'taxa_crescimento_semanal',
+            'floor_key', 'building'
+        ]
+        
+        feature_cols = [col for col in feature_cols if col in df.columns]
+        df_ml = df[feature_cols + ['target_ocupacao', 'data', 'ocupacao_media_dia']].copy()
+        df_ml = df_ml.fillna(0)
+        
+        print(f"✅ Dataset preparado: {len(df_ml):,} amostras")
+        print(f"   🏢 Andares: {df_ml['floor_key'].nunique()}")
+        print(f"   📊 Features: {len(feature_cols)}")
+        
+        return df_ml
+    
+    def save_processed_data(self, df_to_save, filepath='data_processed_floor.csv'):
+        if df_to_save is not None and not df_to_save.empty:
+            df_to_save.to_csv(filepath, index=False)
+            print(f"\n💾 Dados salvos: {filepath}")
+            print(f"   📊 Registros: {len(df_to_save):,}")
+            return True
+        return False
+    
+    def get_floor_statistics(self):
+        """Estatísticas por andar"""
+        if self.df_processed is None:
+            return {}
+        
+        stats = {}
+        for floor in self.df_processed['floor_key'].unique():
+            df_f = self.df_processed[self.df_processed['floor_key'] == floor]
+            capacity = self.floor_capacities.get(floor, 0)
+            
+            stats[floor] = {
+                'dias': len(df_f),
+                'ocupacao_media': df_f['ocupacao_media_dia'].mean(),
+                'ocupacao_max': df_f['ocupacao_media_dia'].max(),
+                'ocupacao_min': df_f['ocupacao_media_dia'].min(),
+                'capacidade': capacity,
+                'periodo': f"{df_f['data'].min().date()} - {df_f['data'].max().date()}"
+            }
+        
+        return stats
+
+if __name__ == "__main__":
+    print("="*60)
+    print("🚀 PROCESSADOR DE DADOS POR ANDAR - v1.0")
+    print("="*60)
+    
+    processor = FloorOccupationProcessor()
+    filepath = 'dados_catracas.csv'
+    
+    try:
+        processor.set_filepath(filepath)
+        df_processed = processor.clean_and_aggregate_chunks(chunksize=2000000)
+        
+        if df_processed is not None:
+            processor.add_features()
+            df_ml = processor.prepare_ml_dataset()
+            processor.save_processed_data(df_ml, 'data_processed_floor.csv')
+            
+            print("\n📊 ESTATÍSTICAS POR ANDAR (TOP 10):")
+            print("="*60)
+            stats = processor.get_floor_statistics()
+            
+            for i, (floor, data) in enumerate(list(stats.items())[:10]):
+                print(f"\n{i+1}. {floor}")
+                print(f"   • Dias: {data['dias']}")
+                print(f"   • Ocupação média: {data['ocupacao_media']:.0f} ({data['ocupacao_media']/data['capacidade']*100:.1f}%)")
+                print(f"   • Período: {data['periodo']}")
+            
+            print(f"\n✅ Total de andares processados: {len(stats)}")
+            print(f"\n🔄 Próximo passo: python train_model_floor.py")
+        
+    except Exception as e:
+        print(f"\n❌ Erro: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+<\data_processor>
+
+
+esses foram os resultados do data_processor_floor
+<results_data_processor_floor>C:\Users\RHMBARD\Downloads\novo_sistema>python data_processor_floor.py
+============================================================
+🚀 PROCESSADOR DE DADOS POR ANDAR - v1.0
+============================================================
+📂 Arquivo de dados definido: dados_catracas.csv
+
+📊 Processando dados POR ANDAR (chunks de 2,000,000)...
+   🌀 Processando Lote 1...
+      📉 Duplicatas removidas: 1,294,659
+   🌀 Processando Lote 2...
+      📉 Duplicatas removidas: 1,231,070
+   🌀 Processando Lote 3...
+      📉 Duplicatas removidas: 1,230,292
+   🌀 Processando Lote 4...
+      📉 Duplicatas removidas: 1,241,198
+   🌀 Processando Lote 5...
+      📉 Duplicatas removidas: 1,187,822
+   🌀 Processando Lote 6...
+      📉 Duplicatas removidas: 1,202,385
+   🌀 Processando Lote 7...
+      📉 Duplicatas removidas: 1,234,819
+   🌀 Processando Lote 8...
+      📉 Duplicatas removidas: 1,214,278
+   🌀 Processando Lote 9...
+      📉 Duplicatas removidas: 1,240,044
+   🌀 Processando Lote 10...
+      📉 Duplicatas removidas: 1,345,359
+   🌀 Processando Lote 11...
+      📉 Duplicatas removidas: 1,251,367
+   🌀 Processando Lote 12...
+      📉 Duplicatas removidas: 1,208,376
+   🌀 Processando Lote 13...
+      📉 Duplicatas removidas: 1,208,967
+   🌀 Processando Lote 14...
+      📉 Duplicatas removidas: 1,199,354
+   🌀 Processando Lote 15...
+      📉 Duplicatas removidas: 1,214,649
+   🌀 Processando Lote 16...
+      📉 Duplicatas removidas: 1,222,052
+   🌀 Processando Lote 17...
+      📉 Duplicatas removidas: 1,217,403
+   🌀 Processando Lote 18...
+      📉 Duplicatas removidas: 640,815
+
+   ✅ 18 lotes processados
+   📊 Registros originais: 35,069,730
+   📊 Duplicatas removidas: 27,655,506
+
+   🔍 Filtrando andares com mínimo 200 dias...
+      • Total de andares únicos: 99
+      • Andares com ≥200 dias: 95
+      • Andares removidos: 4
+
+✅ Processamento concluído:
+   📊 26,058 registros
+   🏢 95 andares válidos
+   📅 Período: 2024-11-01 até 2025-11-08
+
+✨ Criando features de ML...
+
+🌤️ Buscando clima real (Open-Meteo)...
+   ⚠️ Erro: failed to request 'https://api.open-meteo.com/v1/forecast': HTTPSConnectionPool(host='api.open-meteo.com', port=443): Max retries exceeded with url: /v1/forecast?llatitude=-23.5475&longitude=-46.6361&daily=temperature_2m_mean&daily=precipitation_sum&timezone=America%2FSao_Paulo&past_days=92&forecast_days=16&format=flatbuffers (Caused by ProtocolError('Connection aborted.', ConnectionResetError(10054, 'Foi forçado o cancelamento de uma conexão existente pelo host remoto', None, 10054, None))). Usando dados simulados.
+   📊 Criando lags (1, 2, 7, 14 dias)...
+✅ Features criadas. Colunas: 34
+
+🎯 Preparando dataset para ML...
+✅ Dataset preparado: 24,633 amostras
+   🏢 Andares: 95
+   📊 Features: 31
+
+💾 Dados salvos: data_processed_floor.csv
+   📊 Registros: 24,633
+
+📊 ESTATÍSTICAS POR ANDAR (TOP 10):
+============================================================
+
+1. cea_cea_01
+   • Dias: 255
+   • Ocupação média: 507 (112.6%)
+   • Período: 2024-11-01 - 2025-11-07
+
+2. cea_cea_02
+   • Dias: 257
+   • Ocupação média: 485 (inf%)
+   • Período: 2024-11-01 - 2025-11-07
+
+3. cea_cea_03
+   • Dias: 256
+   • Ocupação média: 273 (59.1%)
+   • Período: 2024-11-01 - 2025-11-07
+
+4. cea_cea_04
+   • Dias: 218
+   • Ocupação média: 94 (32.1%)
+   • Período: 2024-11-01 - 2025-11-07
+
+5. cea_cea_07
+   • Dias: 261
+   • Ocupação média: 559 (94.4%)
+   • Período: 2024-11-01 - 2025-11-07
+
+6. cea_cea_09
+   • Dias: 254
+   • Ocupação média: 328 (198.7%)
+   • Período: 2024-11-01 - 2025-11-07
+
+7. centro_empresarial_alfredo_egydio_01
+   • Dias: 332
+   • Ocupação média: 284 (142.2%)
+   • Período: 2024-11-01 - 2025-11-08
+
+8. centro_empresarial_alfredo_egydio_02
+   • Dias: 268
+   • Ocupação média: 296 (148.0%)
+   • Período: 2024-11-01 - 2025-11-07
+
+9. centro_empresarial_alfredo_egydio_03
+   • Dias: 270
+   • Ocupação média: 129 (69.8%)
+   • Período: 2024-11-01 - 2025-11-08
+
+10. centro_empresarial_alfredo_egydio_04
+   • Dias: 277
+   • Ocupação média: 252 (127.0%)
+   • Período: 2024-11-01 - 2025-11-07
+
+✅ Total de andares processados: 95
+
+🔄 Próximo passo: python train_model_floor.py
+
+C:\Users\RHMBARD\Downloads\novo_sistema><results_data_processor_floor>
+
+
+
+aqui esta o train_model_floor, ele treina o modelo, e estamos tendo problemas pois ele aceita R² de -97%, e as previsões não estão boas
+<train_model_floor>"""
+========================================
+TRAIN MODEL FLOOR - v1.0
+========================================
+✅ Treina modelo POR ANDAR
+✅ Filtra andares com sMAPE > 50%
+✅ Validação individual por andar
+✅ Gradient Boosting otimizado
+========================================
+"""
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import LabelEncoder
+import joblib
+import json
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
+
+def safe_mape(y_true, y_pred):
+    """MAPE seguro"""
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    mask = y_true > 50
+    if not np.any(mask):
+        return 0.0
+    return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+
+def symmetric_mape(y_true, y_pred):
+    """sMAPE - Metric principal"""
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    mask = y_true > 50
+    if not np.any(mask):
+        return 0.0
+    y_true_safe = y_true[mask]
+    y_pred_safe = y_pred[mask]
+    return np.mean(2.0 * np.abs(y_pred_safe - y_true_safe) / (np.abs(y_true_safe) + np.abs(y_pred_safe))) * 100
+
+class FloorOccupationPredictor:
+    
+    def __init__(self):
+        self.models = {}  # Um modelo por andar
+        self.label_encoders = {}
+        self.feature_names = None
+        self.floor_metrics = {}  # Métricas por andar
+        self.valid_floors = []  # Andares com sMAPE < 50%
+        
+    def prepare_data(self, df):
+        """Prepara dados para treinamento"""
+        print("\n🔧 Preparando dados...")
+        df = df.copy()
+        
+        # Encoder para floor_key e building
+        le_floor = LabelEncoder()
+        le_building = LabelEncoder()
+        
+        df['floor_encoded'] = le_floor.fit_transform(df['floor_key'])
+        df['building_encoded'] = le_building.fit_transform(df['building'])
+        
+        self.label_encoders['floor'] = le_floor
+        self.label_encoders['building'] = le_building
+        
+        feature_cols = [
+            'dia_semana', 'dia_mes', 'mes', 'semana_ano', 'dia_ano',
+            'dia_ano_sin', 'dia_ano_cos', 'dia_semana_sin', 'dia_semana_cos',
+            'temperatura', 'chuva', 
+            'feriado', 'feriado_ontem', 'feriado_amanha', 'eh_emendado', 'evento_especial',
+            'eh_fds', 'eh_segunda', 'eh_sexta', 'eh_meio_semana',
+            'ocupacao_lag_1d', 'ocupacao_lag_2d', 'ocupacao_lag_7d', 'ocupacao_lag_14d',
+            'ocupacao_media_7d', 'ocupacao_media_30d', 'ocupacao_std_7d',
+            'tendencia_diaria', 'taxa_crescimento_semanal',
+            'floor_encoded', 'building_encoded'
+        ]
+        
+        feature_cols = [col for col in feature_cols if col in df.columns]
+        self.feature_names = feature_cols
+        
+        X = df[feature_cols]
+        y = df['target_ocupacao']
+        
+        print(f"✅ Features: {len(feature_cols)}")
+        print(f"✅ Amostras: {len(X):,}")
+        
+        return X, y, df
+    
+    def train_by_floor(self, df, test_size=0.2):
+        """Treina um modelo para CADA andar"""
+        print(f"\n{'='*60}")
+        print(f"🤖 TREINAMENTO POR ANDAR")
+        print(f"{'='*60}")
+        
+        floors = df['floor_key'].unique()
+        print(f"\n📊 Total de andares: {len(floors)}")
+        
+        X_full, y_full, df_prepared = self.prepare_data(df)
+        
+        valid_count = 0
+        rejected_count = 0
+        
+        for floor in floors:
+            print(f"\n{'─'*60}")
+            print(f"🏢 Andar: {floor}")
+            
+            # Dados do andar
+            mask = df_prepared['floor_key'] == floor
+            X_floor = X_full[mask]
+            y_floor = y_full[mask]
+            dates_floor = df_prepared.loc[mask, 'data']
+            
+            if len(X_floor) < 200:
+                print(f"   ⚠️ Poucos dados ({len(X_floor)} dias). Pulando.")
+                rejected_count += 1
+                continue
+            
+            # Split temporal
+            cutoff_date = dates_floor.quantile(1 - test_size)
+            train_mask = (dates_floor < cutoff_date)
+            test_mask = (dates_floor >= cutoff_date)
+            
+            X_train = X_floor[train_mask.values]
+            X_test = X_floor[test_mask.values]
+            y_train = y_floor[train_mask.values]
+            y_test = y_floor[test_mask.values]
+            
+            if len(X_test) < 10:
+                print(f"   ⚠️ Test set muito pequeno. Pulando.")
+                rejected_count += 1
+                continue
+            
+            print(f"   📊 Train: {len(X_train)} dias | Test: {len(X_test)} dias")
+            
+            # Treinar modelo
+            model = GradientBoostingRegressor(
+                n_estimators=150,
+                learning_rate=0.08,
+                max_depth=4,
+                min_samples_split=20,
+                min_samples_leaf=15,
+                subsample=0.8,
+                max_features='sqrt',
+                random_state=42,
+                verbose=0
+            )
+            
+            model.fit(X_train, y_train)
+            
+            # Predições
+            y_test_pred = np.maximum(model.predict(X_test), 0)
+            
+            # Métricas
+            mae = mean_absolute_error(y_test, y_test_pred)
+            rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
+            r2 = r2_score(y_test, y_test_pred)
+            mape = safe_mape(y_test, y_test_pred)
+            smape = symmetric_mape(y_test, y_test_pred)
+            
+            print(f"   📈 Métricas de Teste:")
+            print(f"      • MAE:   {mae:>6.1f} pessoas")
+            print(f"      • RMSE:  {rmse:>6.1f} pessoas")
+            print(f"      • R²:    {r2:>6.4f} ({r2*100:.1f}%)")
+            print(f"      • MAPE:  {mape:>6.2f}%")
+            print(f"      • sMAPE: {smape:>6.2f}%", end='')
+            
+            # Validação de qualidade
+            if smape <= 50:
+                print(f" ✅ APROVADO")
+                self.models[floor] = model
+                self.valid_floors.append(floor)
+                self.floor_metrics[floor] = {
+                    'mae': float(mae),
+                    'rmse': float(rmse),
+                    'r2': float(r2),
+                    'mape': float(mape),
+                    'smape': float(smape),
+                    'train_size': int(len(X_train)),
+                    'test_size': int(len(X_test)),
+                    'status': 'valid'
+                }
+                valid_count += 1
+            else:
+                print(f" ❌ REJEITADO (sMAPE > 50%)")
+                self.floor_metrics[floor] = {
+                    'smape': float(smape),
+                    'status': 'rejected',
+                    'reason': 'smape_too_high'
+                }
+                rejected_count += 1
+        
+        print(f"\n{'='*60}")
+        print(f"📊 RESUMO DO TREINAMENTO")
+        print(f"{'='*60}")
+        print(f"   ✅ Andares aprovados (sMAPE ≤ 50%): {valid_count}")
+        print(f"   ❌ Andares rejeitados: {rejected_count}")
+        print(f"   📈 Taxa de aprovação: {valid_count/(valid_count+rejected_count)*100:.1f}%")
+        
+        # Top 5 melhores andares
+        valid_metrics = {k: v for k, v in self.floor_metrics.items() if v.get('status') == 'valid'}
+        sorted_floors = sorted(valid_metrics.items(), key=lambda x: x[1]['smape'])
+        
+        print(f"\n🏆 TOP 5 MELHORES ANDARES (menor sMAPE):")
+        for i, (floor, metrics) in enumerate(sorted_floors[:5], 1):
+            print(f"   {i}. {floor}")
+            print(f"      • sMAPE: {metrics['smape']:.2f}%")
+            print(f"      • R²: {metrics['r2']:.4f}")
+            print(f"      • Dias treino/teste: {metrics['train_size']}/{metrics['test_size']}")
+        
+        return valid_count > 0
+    
+    def predict_next_days(self, floor_key, current_features, n_days=7):
+        """Prediz próximos N dias para um andar"""
+        if floor_key not in self.models:
+            return None
+        
+        model = self.models[floor_key]
+        predictions = []
+        features = current_features.copy()
+        
+        for day in range(n_days):
+            df = pd.DataFrame([features])
+            
+            # Encoders
+            if 'floor_key' in df.columns:
+                df['floor_encoded'] = self.label_encoders['floor'].transform(df['floor_key'])
+            if 'building' in df.columns:
+                df['building_encoded'] = self.label_encoders['building'].transform(df['building'])
+            
+            for feat in self.feature_names:
+                if feat not in df.columns:
+                    df[feat] = 0
+            
+            X = df[self.feature_names]
+            prediction = max(0, model.predict(X)[0])
+            
+            predictions.append({
+                'day_offset': day + 1,
+                'prediction': float(prediction)
+            })
+            
+            # Atualizar features para próximo dia
+            features['ocupacao_lag_14d'] = features.get('ocupacao_lag_7d', 0)
+            features['ocupacao_lag_7d'] = features.get('ocupacao_lag_2d', 0)
+            features['ocupacao_lag_2d'] = features.get('ocupacao_lag_1d', 0)
+            features['ocupacao_lag_1d'] = prediction
+            
+            if 'dia_semana' in features:
+                features['dia_semana'] = (features['dia_semana'] + 1) % 7
+                features['eh_fds'] = int(features['dia_semana'] in [5, 6])
+                features['eh_segunda'] = int(features['dia_semana'] == 0)
+                features['eh_sexta'] = int(features['dia_semana'] == 4)
+                features['eh_meio_semana'] = int(features['dia_semana'] in [1, 2, 3])
+        
+        return predictions
+    
+    def save_model(self, filepath='model_floor.pkl'):
+        """Salva modelos e encoders"""
+        model_data = {
+            'models': self.models,
+            'label_encoders': self.label_encoders,
+            'feature_names': self.feature_names,
+            'floor_metrics': self.floor_metrics,
+            'valid_floors': self.valid_floors,
+            'trained_at': datetime.now().isoformat()
+        }
+        
+        joblib.dump(model_data, filepath)
+        print(f"\n💾 Modelo salvo: {filepath}")
+        
+        # Salvar métricas separadamente
+        metrics_file = filepath.replace('.pkl', '_metrics.json')
+        with open(metrics_file, 'w') as f:
+            json.dump(self.floor_metrics, f, indent=2)
+        print(f"📊 Métricas salvas: {metrics_file}")
+        
+        return True
+    
+    def load_model(self, filepath='model_floor.pkl'):
+        """Carrega modelos treinados"""
+        model_data = joblib.load(filepath)
+        self.models = model_data['models']
+        self.label_encoders = model_data['label_encoders']
+        self.feature_names = model_data['feature_names']
+        self.floor_metrics = model_data['floor_metrics']
+        self.valid_floors = model_data['valid_floors']
+        
+        print(f"✅ Modelo carregado: {filepath}")
+        print(f"   • Andares válidos: {len(self.valid_floors)}")
+        return True
+
+def main():
+    print("="*60)
+    print("🤖 TREINAMENTO DO MODELO POR ANDAR - v1.0")
+    print("="*60)
+    
+    print("\n📂 Carregando dados processados...")
+    try:
+        df = pd.read_csv('data_processed_floor.csv')
+        df['data'] = pd.to_datetime(df['data'])
+        print(f"✅ Dados carregados: {len(df):,} registros")
+        print(f"   🏢 Andares únicos: {df['floor_key'].nunique()}")
+        print(f"   📅 Período: {df['data'].min().date()} - {df['data'].max().date()}")
+    except FileNotFoundError:
+        print("❌ Erro: Arquivo 'data_processed_floor.csv' não encontrado!")
+        print("   Execute: python data_processor_floor.py")
+        return
+    
+    predictor = FloorOccupationPredictor()
+    success = predictor.train_by_floor(df, test_size=0.2)
+    
+    if success:
+        predictor.save_model('model_floor.pkl')
+        
+        print("\n✅ Treinamento concluído!")
+        print(f"📁 Arquivos gerados:")
+        print(f"   • model_floor.pkl")
+        print(f"   • model_floor_metrics.json")
+        print(f"\n🔄 Próximo passo: python gerar_json_floor.py")
+    else:
+        print("\n❌ Nenhum andar foi aprovado no treinamento!")
+        print("   Verifique os dados de entrada.")
+
+if __name__ == "__main__":
+    main()
+
+<\train_model_floor>
+
+
+agora temos os resultados do terminal do train_model
+<results_train_model_floor>C:\Users\RHMBARD\Downloads\novo_sistema> python train_model_floor.py
+
+============================================================
+
+🤖 TREINAMENTO DO MODELO POR ANDAR - v1.0
+
+============================================================
+
+📂 Carregando dados processados...
+
+✅ Dados carregados: 24,633 registros
+
+   🏢 Andares únicos: 95
+
+   📅 Período: 2024-11-15 - 2025-11-07
+
+============================================================
+
+🤖 TREINAMENTO POR ANDAR
+
+============================================================
+
+📊 Total de andares: 95
+
+🔧 Preparando dados...
+
+✅ Features: 31
+
+✅ Amostras: 24,633
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: cea_cea_01
+
+   📊 Train: 192 dias | Test: 48 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     92.4 pessoas
+
+      • RMSE:   155.2 pessoas
+
+      • R²:    0.6185 (61.9%)
+
+      • MAPE:   24.67%
+
+      • sMAPE:  18.33% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: cea_cea_02
+
+   📊 Train: 193 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     84.6 pessoas
+
+      • RMSE:   107.3 pessoas
+
+      • R²:    0.4109 (41.1%)
+
+      • MAPE:   21.44%
+
+      • sMAPE:  18.00% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: cea_cea_03
+
+   📊 Train: 192 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     67.4 pessoas
+
+      • RMSE:    93.8 pessoas
+
+      • R²:    -0.0343 (-3.4%)
+
+      • MAPE:   39.33%
+
+      • sMAPE:  24.12% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: cea_cea_04
+
+   📊 Train: 162 dias | Test: 41 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     44.7 pessoas
+
+      • RMSE:    67.7 pessoas
+
+      • R²:    0.5620 (56.2%)
+
+      • MAPE:   19.42%
+
+      • sMAPE:  25.80% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: cea_cea_07
+
+   📊 Train: 196 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    150.0 pessoas
+
+      • RMSE:   220.0 pessoas
+
+      • R²:    -0.0874 (-8.7%)
+
+      • MAPE:   30.81%
+
+      • sMAPE:  21.81% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: cea_cea_09
+
+   📊 Train: 191 dias | Test: 48 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     81.8 pessoas
+
+      • RMSE:   105.8 pessoas
+
+      • R²:    0.5586 (55.9%)
+
+      • MAPE:   19.32%
+
+      • sMAPE:  18.67% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_01
+
+   📊 Train: 253 dias | Test: 64 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    107.1 pessoas
+
+      • RMSE:   137.6 pessoas
+
+      • R²:    0.4406 (44.1%)
+
+      • MAPE:   39.59%
+
+      • sMAPE:  31.64% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_02
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     69.0 pessoas
+
+      • RMSE:   101.1 pessoas
+
+      • R²:    0.5195 (52.0%)
+
+      • MAPE:   21.41%
+
+      • sMAPE:  21.54% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_03
+
+   📊 Train: 204 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     32.2 pessoas
+
+      • RMSE:    44.0 pessoas
+
+      • R²:    0.0345 (3.5%)
+
+      • MAPE:   24.60%
+
+      • sMAPE:  21.90% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_04
+
+   📊 Train: 209 dias | Test: 53 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     65.8 pessoas
+
+      • RMSE:    91.1 pessoas
+
+      • R²:    -0.0920 (-9.2%)
+
+      • MAPE:   21.41%
+
+      • sMAPE:  23.06% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_05
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     69.7 pessoas
+
+      • RMSE:    90.1 pessoas
+
+      • R²:    0.0768 (7.7%)
+
+      • MAPE:   33.14%
+
+      • sMAPE:  26.40% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_06
+
+   📊 Train: 204 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     72.1 pessoas
+
+      • RMSE:   103.0 pessoas
+
+      • R²:    0.0904 (9.0%)
+
+      • MAPE:   24.29%
+
+      • sMAPE:  21.30% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_07
+
+   📊 Train: 218 dias | Test: 55 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    134.0 pessoas
+
+      • RMSE:   176.0 pessoas
+
+      • R²:    0.2305 (23.0%)
+
+      • MAPE:   34.25%
+
+      • sMAPE:  26.97% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_08
+
+   📊 Train: 216 dias | Test: 55 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    165.2 pessoas
+
+      • RMSE:   232.1 pessoas
+
+      • R²:    0.0164 (1.6%)
+
+      • MAPE:   37.22%
+
+      • sMAPE:  24.73% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_09
+
+   📊 Train: 200 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     31.5 pessoas
+
+      • RMSE:    41.5 pessoas
+
+      • R²:    -0.4307 (-43.1%)
+
+      • MAPE:   30.86%
+
+      • sMAPE:  26.11% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_10
+
+   📊 Train: 200 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     42.2 pessoas
+
+      • RMSE:    57.0 pessoas
+
+      • R²:    -0.4725 (-47.2%)
+
+      • MAPE:   31.07%
+
+      • sMAPE:  25.26% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_11
+
+   📊 Train: 196 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     18.9 pessoas
+
+      • RMSE:    25.1 pessoas
+
+      • R²:    -0.5221 (-52.2%)
+
+      • MAPE:   20.05%
+
+      • sMAPE:  18.32% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_alfredo_egydio_12
+
+   📊 Train: 211 dias | Test: 53 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    106.6 pessoas
+
+      • RMSE:   148.8 pessoas
+
+      • R²:    0.2087 (20.9%)
+
+      • MAPE:   22.14%
+
+      • sMAPE:  20.97% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_01
+
+   📊 Train: 201 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     41.7 pessoas
+
+      • RMSE:    60.1 pessoas
+
+      • R²:    0.0121 (1.2%)
+
+      • MAPE:   18.57%
+
+      • sMAPE:  17.23% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_02
+
+   📊 Train: 197 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     30.8 pessoas
+
+      • RMSE:    41.5 pessoas
+
+      • R²:    0.0275 (2.8%)
+
+      • MAPE:   26.89%
+
+      • sMAPE:  23.28% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_03
+
+   📊 Train: 207 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     60.3 pessoas
+
+      • RMSE:    83.7 pessoas
+
+      • R²:    0.2254 (22.5%)
+
+      • MAPE:   26.85%
+
+      • sMAPE:  29.49% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_04
+
+   📊 Train: 193 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     13.8 pessoas
+
+      • RMSE:    19.2 pessoas
+
+      • R²:    0.3445 (34.4%)
+
+      • MAPE:   13.28%
+
+      • sMAPE:  12.93% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_05
+
+   ⚠️ Poucos dados (187 dias). Pulando.
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_06
+
+   📊 Train: 193 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     28.2 pessoas
+
+      • RMSE:    37.4 pessoas
+
+      • R²:    0.7833 (78.3%)
+
+      • MAPE:   21.17%
+
+      • sMAPE:  20.94% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_07
+
+   📊 Train: 196 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     70.9 pessoas
+
+      • RMSE:   124.9 pessoas
+
+      • R²:    0.3763 (37.6%)
+
+      • MAPE:   17.09%
+
+      • sMAPE:  17.26% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_08
+
+   📊 Train: 200 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     96.0 pessoas
+
+      • RMSE:   131.2 pessoas
+
+      • R²:    -0.2091 (-20.9%)
+
+      • MAPE:   36.71%
+
+      • sMAPE:  28.29% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_09
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     91.8 pessoas
+
+      • RMSE:   148.3 pessoas
+
+      • R²:    0.0754 (7.5%)
+
+      • MAPE:   20.01%
+
+      • sMAPE:  16.57% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_10
+
+   📊 Train: 220 dias | Test: 55 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    226.9 pessoas
+
+      • RMSE:   338.5 pessoas
+
+      • R²:    0.0758 (7.6%)
+
+      • MAPE:   44.10%
+
+      • sMAPE:  28.85% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_11
+
+   📊 Train: 196 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     44.1 pessoas
+
+      • RMSE:    54.2 pessoas
+
+      • R²:    -0.9706 (-97.1%)
+
+      • MAPE:   40.61%
+
+      • sMAPE:  35.05% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_12
+
+   📊 Train: 198 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     41.6 pessoas
+
+      • RMSE:    59.6 pessoas
+
+      • R²:    0.5254 (52.5%)
+
+      • MAPE:   21.61%
+
+      • sMAPE:  20.76% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_conceicao_pm
+
+   📊 Train: 208 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     59.5 pessoas
+
+      • RMSE:    81.5 pessoas
+
+      • R²:    0.2186 (21.9%)
+
+      • MAPE:   28.99%
+
+      • sMAPE:  24.24% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_01
+
+   📊 Train: 199 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     68.4 pessoas
+
+      • RMSE:    80.6 pessoas
+
+      • R²:    -0.2503 (-25.0%)
+
+      • MAPE:   36.63%
+
+      • sMAPE:  37.97% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_02
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     25.1 pessoas
+
+      • RMSE:    33.6 pessoas
+
+      • R²:    -0.1705 (-17.1%)
+
+      • MAPE:   22.44%
+
+      • sMAPE:  19.85% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_03
+
+   📊 Train: 204 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     98.3 pessoas
+
+      • RMSE:   137.0 pessoas
+
+      • R²:    0.4748 (47.5%)
+
+      • MAPE:   28.93%
+
+      • sMAPE:  27.36% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_04
+
+   📊 Train: 208 dias | Test: 53 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    143.5 pessoas
+
+      • RMSE:   200.7 pessoas
+
+      • R²:    0.4088 (40.9%)
+
+      • MAPE:   28.78%
+
+      • sMAPE:  26.01% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_05
+
+   📊 Train: 219 dias | Test: 55 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    148.3 pessoas
+
+      • RMSE:   191.0 pessoas
+
+      • R²:    0.4992 (49.9%)
+
+      • MAPE:   43.52%
+
+      • sMAPE:  48.41% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_06
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     85.8 pessoas
+
+      • RMSE:   115.0 pessoas
+
+      • R²:    0.7062 (70.6%)
+
+      • MAPE:   36.57%
+
+      • sMAPE:  30.18% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_07
+
+   📊 Train: 200 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     99.1 pessoas
+
+      • RMSE:   124.5 pessoas
+
+      • R²:    -0.3369 (-33.7%)
+
+      • MAPE:   58.42%
+
+      • sMAPE:  48.03% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_08
+
+   📊 Train: 204 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    174.8 pessoas
+
+      • RMSE:   257.3 pessoas
+
+      • R²:    0.6089 (60.9%)
+
+      • MAPE:   73.60%
+
+      • sMAPE:  35.51% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_09
+
+   📊 Train: 200 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     87.4 pessoas
+
+      • RMSE:   125.0 pessoas
+
+      • R²:    0.4822 (48.2%)
+
+      • MAPE:   27.97%
+
+      • sMAPE:  26.95% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_10
+
+   📊 Train: 207 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    172.6 pessoas
+
+      • RMSE:   221.6 pessoas
+
+      • R²:    0.6976 (69.8%)
+
+      • MAPE:   38.98%
+
+      • sMAPE:  29.83% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_11
+
+   📊 Train: 213 dias | Test: 54 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    251.7 pessoas
+
+      • RMSE:   311.3 pessoas
+
+      • R²:    -0.6177 (-61.8%)
+
+      • MAPE:   43.83%
+
+      • sMAPE:  50.80% ❌ REJEITADO (sMAPE > 50%)
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_12
+
+   📊 Train: 211 dias | Test: 53 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    301.6 pessoas
+
+      • RMSE:   378.1 pessoas
+
+      • R²:    0.1930 (19.3%)
+
+      • MAPE:   33.00%
+
+      • sMAPE:  28.36% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_13
+
+   📊 Train: 198 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    120.1 pessoas
+
+      • RMSE:   150.0 pessoas
+
+      • R²:    -0.1387 (-13.9%)
+
+      • MAPE:   39.29%
+
+      • sMAPE:  42.88% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_14
+
+   📊 Train: 198 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    337.0 pessoas
+
+      • RMSE:   403.6 pessoas
+
+      • R²:    -0.8515 (-85.1%)
+
+      • MAPE:  185.97%
+
+      • sMAPE: 113.87% ❌ REJEITADO (sMAPE > 50%)
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_eudoro_villela_15
+
+   📊 Train: 198 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    480.0 pessoas
+
+      • RMSE:   540.1 pessoas
+
+      • R²:    -0.5419 (-54.2%)
+
+      • MAPE:  140.60%
+
+      • sMAPE: 100.38% ❌ REJEITADO (sMAPE > 50%)
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_01
+
+   📊 Train: 167 dias | Test: 42 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:      6.8 pessoas
+
+      • RMSE:     9.3 pessoas
+
+      • R²:    0.6507 (65.1%)
+
+      • MAPE:   26.72%
+
+      • sMAPE:  30.85% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_02
+
+   📊 Train: 201 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     44.8 pessoas
+
+      • RMSE:    58.9 pessoas
+
+      • R²:    0.0373 (3.7%)
+
+      • MAPE:   39.02%
+
+      • sMAPE:  30.94% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_03
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     57.4 pessoas
+
+      • RMSE:    72.8 pessoas
+
+      • R²:    0.1390 (13.9%)
+
+      • MAPE:   31.19%
+
+      • sMAPE:  26.10% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_04
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     26.8 pessoas
+
+      • RMSE:    38.6 pessoas
+
+      • R²:    0.4716 (47.2%)
+
+      • MAPE:   18.52%
+
+      • sMAPE:  16.93% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_05
+
+   📊 Train: 196 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     49.1 pessoas
+
+      • RMSE:    63.6 pessoas
+
+      • R²:    0.0130 (1.3%)
+
+      • MAPE:   26.03%
+
+      • sMAPE:  26.39% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_06
+
+   📊 Train: 211 dias | Test: 53 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     68.4 pessoas
+
+      • RMSE:    86.5 pessoas
+
+      • R²:    0.2088 (20.9%)
+
+      • MAPE:   39.20%
+
+      • sMAPE:  32.03% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_07
+
+   📊 Train: 201 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     60.5 pessoas
+
+      • RMSE:    71.4 pessoas
+
+      • R²:    -0.0769 (-7.7%)
+
+      • MAPE:   31.25%
+
+      • sMAPE:  31.14% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_08
+
+   📊 Train: 192 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     27.2 pessoas
+
+      • RMSE:    36.4 pessoas
+
+      • R²:    0.2983 (29.8%)
+
+      • MAPE:   19.64%
+
+      • sMAPE:  21.00% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_09
+
+   📊 Train: 194 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     36.8 pessoas
+
+      • RMSE:    45.6 pessoas
+
+      • R²:    -0.2862 (-28.6%)
+
+      • MAPE:   32.32%
+
+      • sMAPE:  26.71% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_10
+
+   📊 Train: 196 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     31.2 pessoas
+
+      • RMSE:    43.1 pessoas
+
+      • R²:    0.5618 (56.2%)
+
+      • MAPE:   19.69%
+
+      • sMAPE:  18.31% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_11
+
+   📊 Train: 192 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     19.6 pessoas
+
+      • RMSE:    27.9 pessoas
+
+      • R²:    0.5663 (56.6%)
+
+      • MAPE:   14.23%
+
+      • sMAPE:  15.77% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_jabaquara_12
+
+   📊 Train: 201 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     79.9 pessoas
+
+      • RMSE:   111.9 pessoas
+
+      • R²:    0.6507 (65.1%)
+
+      • MAPE:   38.60%
+
+      • sMAPE:  26.79% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_01
+
+   📊 Train: 197 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     37.2 pessoas
+
+      • RMSE:    58.8 pessoas
+
+      • R²:    0.1494 (14.9%)
+
+      • MAPE:   16.52%
+
+      • sMAPE:  15.68% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_02
+
+   📊 Train: 197 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     34.6 pessoas
+
+      • RMSE:    50.4 pessoas
+
+      • R²:    0.5432 (54.3%)
+
+      • MAPE:   19.77%
+
+      • sMAPE:  18.43% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_03
+
+   📊 Train: 198 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     24.6 pessoas
+
+      • RMSE:    35.5 pessoas
+
+      • R²:    0.6601 (66.0%)
+
+      • MAPE:   16.68%
+
+      • sMAPE:  16.29% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_04
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     59.2 pessoas
+
+      • RMSE:    78.8 pessoas
+
+      • R²:    0.0242 (2.4%)
+
+      • MAPE:   27.47%
+
+      • sMAPE:  23.87% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_05
+
+   📊 Train: 200 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     40.3 pessoas
+
+      • RMSE:    52.3 pessoas
+
+      • R²:    0.0121 (1.2%)
+
+      • MAPE:   26.80%
+
+      • sMAPE:  23.23% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_06
+
+   📊 Train: 204 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     54.7 pessoas
+
+      • RMSE:    71.0 pessoas
+
+      • R²:    0.3069 (30.7%)
+
+      • MAPE:   26.10%
+
+      • sMAPE:  28.06% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_07
+
+   📊 Train: 200 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     53.3 pessoas
+
+      • RMSE:    68.6 pessoas
+
+      • R²:    0.4738 (47.4%)
+
+      • MAPE:   24.05%
+
+      • sMAPE:  23.33% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_08
+
+   📊 Train: 207 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     75.7 pessoas
+
+      • RMSE:    98.5 pessoas
+
+      • R²:    -0.2086 (-20.9%)
+
+      • MAPE:   33.32%
+
+      • sMAPE:  29.75% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_olavo_setubal_terreo
+
+   📊 Train: 202 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     64.7 pessoas
+
+      • RMSE:    87.7 pessoas
+
+      • R²:    0.2111 (21.1%)
+
+      • MAPE:   28.83%
+
+      • sMAPE:  23.45% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_01
+
+   📊 Train: 212 dias | Test: 53 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    124.1 pessoas
+
+      • RMSE:   154.8 pessoas
+
+      • R²:    0.0666 (6.7%)
+
+      • MAPE:   42.50%
+
+      • sMAPE:  37.08% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_02
+
+   📊 Train: 204 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     95.7 pessoas
+
+      • RMSE:   134.4 pessoas
+
+      • R²:    0.2941 (29.4%)
+
+      • MAPE:   27.78%
+
+      • sMAPE:  23.25% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_03
+
+   📊 Train: 204 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     92.6 pessoas
+
+      • RMSE:   129.0 pessoas
+
+      • R²:    -0.1329 (-13.3%)
+
+      • MAPE:   26.06%
+
+      • sMAPE:  22.52% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_04
+
+   📊 Train: 206 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     72.5 pessoas
+
+      • RMSE:    98.4 pessoas
+
+      • R²:    0.0904 (9.0%)
+
+      • MAPE:   27.74%
+
+      • sMAPE:  25.00% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_05
+
+   📊 Train: 200 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     37.3 pessoas
+
+      • RMSE:    50.4 pessoas
+
+      • R²:    0.0432 (4.3%)
+
+      • MAPE:   22.27%
+
+      • sMAPE:  19.50% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_06
+
+   📊 Train: 199 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     37.0 pessoas
+
+      • RMSE:    45.7 pessoas
+
+      • R²:    0.0278 (2.8%)
+
+      • MAPE:   31.19%
+
+      • sMAPE:  26.03% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_07
+
+   📊 Train: 225 dias | Test: 57 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     75.3 pessoas
+
+      • RMSE:   102.5 pessoas
+
+      • R²:    0.2591 (25.9%)
+
+      • MAPE:   27.44%
+
+      • sMAPE:  23.23% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_08
+
+   📊 Train: 200 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     58.0 pessoas
+
+      • RMSE:    75.5 pessoas
+
+      • R²:    -0.0669 (-6.7%)
+
+      • MAPE:   33.35%
+
+      • sMAPE:  27.22% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_09
+
+   📊 Train: 200 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     34.8 pessoas
+
+      • RMSE:    47.3 pessoas
+
+      • R²:    0.6094 (60.9%)
+
+      • MAPE:   22.59%
+
+      • sMAPE:  20.24% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_10
+
+   📊 Train: 198 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     28.0 pessoas
+
+      • RMSE:    38.0 pessoas
+
+      • R²:    -0.0653 (-6.5%)
+
+      • MAPE:   17.37%
+
+      • sMAPE:  18.08% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_11
+
+   📊 Train: 198 dias | Test: 50 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     36.9 pessoas
+
+      • RMSE:    46.8 pessoas
+
+      • R²:    0.4444 (44.4%)
+
+      • MAPE:   25.70%
+
+      • sMAPE:  22.86% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: centro_empresarial_wms_12
+
+   📊 Train: 210 dias | Test: 53 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     97.1 pessoas
+
+      • RMSE:   124.8 pessoas
+
+      • R²:    0.2228 (22.3%)
+
+      • MAPE:   28.24%
+
+      • sMAPE:  26.45% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_01
+
+   📊 Train: 285 dias | Test: 72 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     99.3 pessoas
+
+      • RMSE:   140.7 pessoas
+
+      • R²:    0.8498 (85.0%)
+
+      • MAPE:   35.80%
+
+      • sMAPE:  20.41% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_02
+
+   📊 Train: 241 dias | Test: 61 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    232.8 pessoas
+
+      • RMSE:   334.9 pessoas
+
+      • R²:    0.5017 (50.2%)
+
+      • MAPE:   42.72%
+
+      • sMAPE:  26.08% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_03
+
+   📊 Train: 222 dias | Test: 56 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    217.0 pessoas
+
+      • RMSE:   266.0 pessoas
+
+      • R²:    0.2721 (27.2%)
+
+      • MAPE:   31.15%
+
+      • sMAPE:  24.89% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_04
+
+   📊 Train: 220 dias | Test: 55 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    117.1 pessoas
+
+      • RMSE:   137.0 pessoas
+
+      • R²:    0.1351 (13.5%)
+
+      • MAPE:   32.46%
+
+      • sMAPE:  30.49% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_05
+
+   📊 Train: 268 dias | Test: 68 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     71.1 pessoas
+
+      • RMSE:    86.0 pessoas
+
+      • R²:    0.7017 (70.2%)
+
+      • MAPE:   29.76%
+
+      • sMAPE:  31.50% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_07
+
+   📊 Train: 193 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     21.5 pessoas
+
+      • RMSE:    26.4 pessoas
+
+      • R²:    0.8320 (83.2%)
+
+      • MAPE:   16.22%
+
+      • sMAPE:  15.61% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_08
+
+   📊 Train: 228 dias | Test: 58 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    245.5 pessoas
+
+      • RMSE:   312.6 pessoas
+
+      • R²:    0.1299 (13.0%)
+
+      • MAPE:   30.57%
+
+      • sMAPE:  27.21% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_09
+
+   📊 Train: 232 dias | Test: 59 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    373.7 pessoas
+
+      • RMSE:   516.5 pessoas
+
+      • R²:    0.1665 (16.7%)
+
+      • MAPE:   73.67%
+
+      • sMAPE:  28.78% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_10
+
+   📊 Train: 286 dias | Test: 72 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     53.0 pessoas
+
+      • RMSE:    77.1 pessoas
+
+      • R²:    0.8530 (85.3%)
+
+      • MAPE:   20.38%
+
+      • sMAPE:  18.34% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_mez
+
+   📊 Train: 201 dias | Test: 51 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     26.1 pessoas
+
+      • RMSE:    42.4 pessoas
+
+      • R²:    0.3828 (38.3%)
+
+      • MAPE:   17.10%
+
+      • sMAPE:  16.39% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ctsp_centro_tecnologico_terreo
+
+   📊 Train: 208 dias | Test: 52 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     44.2 pessoas
+
+      • RMSE:    58.0 pessoas
+
+      • R²:    0.2110 (21.1%)
+
+      • MAPE:   29.47%
+
+      • sMAPE:  23.29% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ibba_fl3500_fl3500_02
+
+   📊 Train: 282 dias | Test: 71 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    113.1 pessoas
+
+      • RMSE:   155.6 pessoas
+
+      • R²:    0.9258 (92.6%)
+
+      • MAPE:   12.28%
+
+      • sMAPE:  11.66% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ibba_fl3500_fl3500_03
+
+   📊 Train: 248 dias | Test: 63 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    122.9 pessoas
+
+      • RMSE:   177.9 pessoas
+
+      • R²:    0.3950 (39.5%)
+
+      • MAPE:   26.10%
+
+      • sMAPE:  25.49% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ibba_fl3500_fl3500_04
+
+   📊 Train: 219 dias | Test: 55 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     62.0 pessoas
+
+      • RMSE:    80.8 pessoas
+
+      • R²:    0.1139 (11.4%)
+
+      • MAPE:   23.86%
+
+      • sMAPE:  24.03% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ibba_fl3500_fl3500_05
+
+   📊 Train: 257 dias | Test: 65 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:    107.1 pessoas
+
+      • RMSE:   154.0 pessoas
+
+      • R²:    0.6741 (67.4%)
+
+      • MAPE:   21.15%
+
+      • sMAPE:  24.98% ✅ APROVADO
+
+────────────────────────────────────────────────────────────
+
+🏢 Andar: ibba_fl3500_fl3500_terreo
+
+   📊 Train: 195 dias | Test: 49 dias
+
+   📈 Métricas de Teste:
+
+      • MAE:     14.7 pessoas
+
+      • RMSE:    19.3 pessoas
+
+      • R²:    -0.0527 (-5.3%)
+
+      • MAPE:   47.37%
+
+      • sMAPE:  63.11% ❌ REJEITADO (sMAPE > 50%)
+
+============================================================
+
+📊 RESUMO DO TREINAMENTO
+
+============================================================
+
+   ✅ Andares aprovados (sMAPE ≤ 50%): 90
+
+   ❌ Andares rejeitados: 5
+
+   📈 Taxa de aprovação: 94.7%
+
+🏆 TOP 5 MELHORES ANDARES (menor sMAPE):
+
+   1. ibba_fl3500_fl3500_02
+
+      • sMAPE: 11.66%
+
+      • R²: 0.9258
+
+      • Dias treino/teste: 282/71
+
+   2. centro_empresarial_conceicao_04
+
+      • sMAPE: 12.93%
+
+      • R²: 0.3445
+
+      • Dias treino/teste: 193/49
+
+   3. ctsp_centro_tecnologico_07
+
+      • sMAPE: 15.61%
+
+      • R²: 0.8320
+
+      • Dias treino/teste: 193/49
+
+   4. centro_empresarial_olavo_setubal_01
+
+      • sMAPE: 15.68%
+
+      • R²: 0.1494
+
+      • Dias treino/teste: 197/50
+
+   5. centro_empresarial_jabaquara_11
+
+      • sMAPE: 15.77%
+
+      • R²: 0.5663
+
+      • Dias treino/teste: 192/49
+
+💾 Modelo salvo: model_floor.pkl
+
+📊 Métricas salvas: model_floor_metrics.json
+
+✅ Treinamento concluído!
+
+📁 Arquivos gerados:
+
+   • model_floor.pkl
+
+   • model_floor_metrics.json
+
+🔄 Próximo passo: python gerar_json_floor.py
+
+C:\Users\RHMBARD\Downloads\novo_sistema><\results_train_model_floor>
+
+
+
+
+agora temos o gerar_json_floor que gera o json pro html e simulatin ler
+
+<gerar_json_floo>"""
+========================================
+GERAR JSON FLOOR - v1.0
+========================================
+✅ Estrutura hierárquica: Prédio → Andar
+✅ Histórico + Forecast por andar
+✅ Apenas andares válidos (sMAPE ≤ 50%)
+========================================
+"""
+
+import pandas as pd
+import numpy as np
+import json
+from datetime import datetime, timedelta
+from train_model_floor import FloorOccupationPredictor
+import warnings
+warnings.filterwarnings('ignore')
+
+def get_features_from_row(row, feature_names):
+    """Extrai features de uma linha"""
+    features = {}
+    for col in feature_names:
+        if col not in ['floor_encoded', 'building_encoded']:
+            features[col] = row.get(col)
+    
+    # Converter tipos numpy
+    for k, v in features.items():
+        if isinstance(v, (np.integer, np.int64)): 
+            features[k] = int(v)
+        elif isinstance(v, (np.floating, np.float64)): 
+            features[k] = float(v)
+        elif isinstance(v, (np.bool_)): 
+            features[k] = bool(v)
+    
+    features['floor_key'] = str(row.get('floor_key'))
+    features['building'] = str(row.get('building'))
+    return features
+
+# ADICIONADO: Função para formatar o número do andar
+def format_floor_number(floor_num_str):
+    """Formata o número do andar (ex: '01' -> '1', 'n1' -> 'N1')"""
+    if floor_num_str.isdigit():
+        num = int(floor_num_str)
+        return str(num)
+    else:
+        # Retorna em maiúsculas para consistência (ex: 'mez' -> 'MEZ')
+        return floor_num_str.upper()
+
+def gerar_json_predicoes_floor():
+    """Gera JSON hierárquico com predições por andar"""
+    
+    print("="*60)
+    print("📊 GERANDO JSON POR ANDAR - ESTRUTURA HIERÁRQUICA")
+    print("="*60)
+    
+    # Nome amigáveis dos prédios
+    building_names = {
+        'ibba_fl3500': 'IBBA Faria Lima 3500',
+        'centro_empresarial': 'Centro Empresarial Conceição',
+        'cea': 'Centro Empresarial do Aço',
+        'ctsp': 'Centro Tecnológico SP'
+    }
+    
+    # Nomes amigáveis das torres (MODIFICADO)
+    tower_names = {
+        'conceicao': 'Torre Conceição',
+        'jabaquara': 'Torre Jabaquara',
+        'wms': 'Torre Walther Moreira',           # MODIFICADO
+        'olavo_setubal': 'Torre Olavo Setubal',   # MODIFICADO
+        'eudoro_villela': 'Torre Eudoro Villela',
+        'alfredo_egydio': 'Torre Alfredo Egydio',
+        'centro_tecnologico': 'Centro Tecnológico',
+        'fl3500': 'Faria Lima 3500',
+        'cea': 'Torre Aço'                        # MODIFICADO
+    }
+    
+    # Capacidades
+    floor_capacities = {
+        # [Copiar do data_processor_floor.py]
+        'centro_empresarial_conceicao_01': 208,
+        'centro_empresarial_conceicao_02': 180,
+        'centro_empresarial_conceicao_03': 184,
+        'centro_empresarial_conceicao_04': 194,
+        'centro_empresarial_conceicao_05': 162,
+        'centro_empresarial_conceicao_06': 162,
+        'centro_empresarial_conceicao_07': 162,
+        'centro_empresarial_conceicao_08': 162,
+        'centro_empresarial_conceicao_09': 162,
+        'centro_empresarial_conceicao_10': 190,
+        'centro_empresarial_conceicao_11': 192,
+        'centro_empresarial_conceicao_12': 188,
+        'centro_empresarial_jabaquara_02': 108,
+        'centro_empresarial_jabaquara_03': 152,
+        'centro_empresarial_jabaquara_04': 200,
+        'centro_empresarial_jabaquara_05': 200,
+        'centro_empresarial_jabaquara_06': 200,
+        'centro_empresarial_jabaquara_07': 220,
+        'centro_empresarial_jabaquara_08': 214,
+        'centro_empresarial_jabaquara_09': 200,
+        'centro_empresarial_jabaquara_10': 200,
+        'centro_empresarial_jabaquara_11': 200,
+        'centro_empresarial_jabaquara_12': 200,
+        'centro_empresarial_wms_01': 204,
+        'centro_empresarial_wms_02': 200,
+        'centro_empresarial_wms_03': 200,
+        'centro_empresarial_wms_04': 160,
+        'centro_empresarial_wms_05': 200,
+        'centro_empresarial_wms_06': 198,
+        'centro_empresarial_wms_07': 200,
+        'centro_empresarial_wms_08': 200,
+        'centro_empresarial_wms_09': 200,
+        'centro_empresarial_wms_10': 200,
+        'centro_empresarial_wms_11': 200,
+        'centro_empresarial_wms_12': 200,
+        'centro_empresarial_olavo_setubal_00': 63,
+        'centro_empresarial_olavo_setubal_01': 134,
+        'centro_empresarial_olavo_setubal_02': 164,
+        'centro_empresarial_olavo_setubal_03': 168,
+        'centro_empresarial_olavo_setubal_04': 164,
+        'centro_empresarial_olavo_setubal_05': 196,
+        'centro_empresarial_olavo_setubal_06': 108,
+        'centro_empresarial_olavo_setubal_07': 80,
+        'centro_empresarial_eudoro_villela_01': 114,
+        'centro_empresarial_eudoro_villela_03': 141,
+        'centro_empresarial_eudoro_villela_04': 153,
+        'centro_empresarial_eudoro_villela_05': 174,
+        'centro_empresarial_eudoro_villela_06': 150,
+        'centro_empresarial_eudoro_villela_07': 171,
+        'centro_empresarial_eudoro_villela_08': 165,
+        'centro_empresarial_eudoro_villela_09': 177,
+        'centro_empresarial_eudoro_villela_10': 210,
+        'centro_empresarial_eudoro_villela_11': 162,
+        'centro_empresarial_eudoro_villela_12': 186,
+        'centro_empresarial_eudoro_villela_13': 186,
+        'centro_empresarial_eudoro_villela_14': 162,
+        'centro_empresarial_eudoro_villela_15': 186,
+        'centro_empresarial_alfredo_egydio_01': 200,
+        'centro_empresarial_alfredo_egydio_02': 200,
+        'centro_empresarial_alfredo_egydio_03': 185,
+        'centro_empresarial_alfredo_egydio_04': 198,
+        'centro_empresarial_alfredo_egydio_05': 174,
+        'centro_empresarial_alfredo_egydio_06': 200,
+        'centro_empresarial_alfredo_egydio_07': 200,
+        'centro_empresarial_alfredo_egydio_08': 204,
+        'centro_empresarial_alfredo_egydio_09': 200,
+        'centro_empresarial_alfredo_egydio_10': 214,
+        'centro_empresarial_alfredo_egydio_11': 206,
+        'centro_empresarial_alfredo_egydio_12': 134,
+        'ctsp_centro_tecnologico_01': 602,
+        'ctsp_centro_tecnologico_02': 726,
+        'ctsp_centro_tecnologico_03': 703,
+        'ctsp_centro_tecnologico_04': 708,
+        'ctsp_centro_tecnologico_05': 645,
+        'ctsp_centro_tecnologico_07': 162,
+        'ctsp_centro_tecnologico_08': 704,
+        'ctsp_centro_tecnologico_09': 736,
+        'ctsp_centro_tecnologico_10': 741,
+        'ctsp_centro_tecnologico_mez': 310,
+        'ibba_fl3500_fl3500_02': 573,
+        'ibba_fl3500_fl3500_03': 612,
+        'ibba_fl3500_fl3500_04': 527,
+        'ibba_fl3500_fl3500_05': 284,
+        'cea_cea_01': 450,
+        'cea_cea_n1': 274,
+        'cea_cea_03': 461,
+        'cea_cea_04': 294,
+        'cea_cea_07': 592,
+        'cea_cea_09': 165,
+    }
+    
+    # Carregar modelo
+    print("\n📂 Carregando modelo treinado...")
+    try:
+        predictor = FloorOccupationPredictor()
+        predictor.load_model('model_floor.pkl')
+    except FileNotFoundError:
+        print("❌ Erro: Modelo não encontrado!")
+        print("   Execute: python train_model_floor.py")
+        return
+    
+    # Carregar dados
+    print("📂 Carregando dados processados...")
+    try:
+        df = pd.read_csv('data_processed_floor.csv')
+        df['data'] = pd.to_datetime(df['data'])
+    except FileNotFoundError:
+        print("❌ Erro: Dados não encontrados!")
+        return
+    
+    # Filtrar apenas andares válidos
+    df = df[df['floor_key'].isin(predictor.valid_floors)]
+    
+    print(f"\n✅ Andares válidos carregados: {len(predictor.valid_floors)}")
+    
+    # Estrutura hierárquica
+    dados_completos = {}
+    
+    # Agrupar por prédio
+    for building in df['building'].unique():
+        print(f"\n{'='*60}")
+        print(f"🏢 Processando: {building_names.get(building, building)}")
+        print(f"{'='*60}")
+        
+        df_building = df[df['building'] == building]
+        floors_in_building = df_building['floor_key'].unique()
+        
+        print(f"   📊 Andares neste prédio: {len(floors_in_building)}")
+        
+        # Capacidade total do prédio
+        total_capacity = sum(floor_capacities.get(f, 0) for f in floors_in_building)
+        
+        dados_completos[building] = {
+            'name': building_names.get(building, building),
+            'total_capacity': total_capacity,
+            'total_floors': len(floors_in_building),
+            'floors': {}
+        }
+        
+        # Processar cada andar
+        for floor_key in floors_in_building:
+            df_floor = df_building[df_building['floor_key'] == floor_key].copy()
+            df_floor = df_floor.sort_values('data')
+            
+            if len(df_floor) == 0:
+                continue
+            
+            # --- INÍCIO DA LÓGICA MODIFICADA ---
+            # Extrair torre e número do andar (MODIFICADO)
+            try:
+                # Remove o prefixo do prédio (ex: 'centro_empresarial_')
+                # 'building' vem do loop externo e já está correto
+                tower_floor_part = floor_key.replace(building + '_', '')
+                
+                # Pega a torre (tudo antes do último '_') e o andar (depois do último '_')
+                # Ex: 'olavo_setubal_01'.rsplit('_', 1) -> ['olavo_setubal', '01']
+                # Ex: 'cea_01'.rsplit('_', 1) -> ['cea', '01']
+                parts = tower_floor_part.rsplit('_', 1)
+                
+                if len(parts) == 2:
+                    tower_key = parts[0]
+                    floor_num_raw = parts[1]
+                else: 
+                    tower_key = tower_floor_part # Fallback
+                    floor_num_raw = 'N/A' # Andar não especificado
+                    
+            except Exception:
+                tower_key = 'unknown'
+                floor_num_raw = 'unknown'
+
+            # Obter nomes humanizados
+            tower_display_name = tower_names.get(tower_key, tower_key)
+            floor_display_num_formatted = format_floor_number(floor_num_raw)
+            
+            # Formato final humanizado (ex: "Faria Lima 3500 2 andar") (MODIFICADO)
+            if floor_num_raw == 'N/A':
+                floor_display = tower_display_name # Se não houver andar, só o nome da torre
+            elif floor_display_num_formatted.isdigit():
+                floor_display = f"{tower_display_name} {floor_display_num_formatted} andar"
+            else: # Para MEZ, N1, etc.
+                floor_display = f"{tower_display_name} {floor_display_num_formatted}"
+            # --- FIM DA LÓGICA MODIFICADA ---
+            
+            print(f"   └─ {floor_display}")
+            
+            # Histórico (últimos 30 dias)
+            df_recente = df_floor.tail(30)
+            historico = []
+            
+            for i in range(len(df_recente)):
+                row = df_recente.iloc[i]
+                actual = row['ocupacao_media_dia']
+                
+                # Predição para este dia (usando features do dia anterior)
+                if i == 0:
+                    predicted = actual
+                else:
+                    row_anterior = df_recente.iloc[i-1]
+                    features = get_features_from_row(row_anterior, predictor.feature_names)
+                    preds = predictor.predict_next_days(floor_key, features, n_days=1)
+                    predicted = preds[0]['prediction'] if preds else actual
+                
+                error_pct = 0.0
+                if actual > 10:
+                    error_pct = abs(actual - predicted) / actual * 100
+                    error_pct = min(error_pct, 1000)
+                
+                historico.append({
+                    'date': str(row['data'].date()),
+                    'dayOfWeek': ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'][int(row['dia_semana'])],
+                    'actualCount': float(actual),
+                    'predictedCount': float(predicted),
+                    'error': round(error_pct, 2),
+                    'temperature': float(row['temperatura']),
+                    'rain': bool(row['chuva']),
+                    'isWeekend': bool(row['eh_fds']),
+                    'isHoliday': bool(row['feriado'])
+                })
+            
+            # Dados do dia atual
+            linha_atual = df_floor.iloc[-1]
+            features_ultimo_dia = get_features_from_row(linha_atual, predictor.feature_names)
+            
+            # Forecast (próximos 14 dias)
+            predicoes_futuras = predictor.predict_next_days(floor_key, features_ultimo_dia, n_days=14)
+            
+            forecast = []
+            data_base = linha_atual['data']
+            
+            for pred in predicoes_futuras:
+                data_futura = data_base + timedelta(days=pred['day_offset'])
+                dia_semana = data_futura.dayofweek
+                
+                forecast.append({
+                    'date': str(data_futura.date()),
+                    'dayOfWeek': ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'][dia_semana],
+                    'predictedCount': int(round(pred['prediction'], 0)),
+                    'isWeekend': dia_semana in [5, 6],
+                    'dayOffset': pred['day_offset']
+                })
+            
+            # Métricas do andar
+            metrics = predictor.floor_metrics.get(floor_key, {})
+            
+            # Achar o dia de pico (garantir que forecast não está vazio)
+            if forecast:
+                max_pred_day = max(forecast, key=lambda x: x['predictedCount'])
+            else:
+                # Fallback caso não haja forecast
+                max_pred_day = {'date': 'N/A', 'dayOfWeek': 'N/A', 'predictedCount': 0}
+            
+            # Salvar dados do andar (MODIFICADO)
+            dados_completos[building]['floors'][floor_key] = {
+                'name': floor_display,                     # MODIFICADO
+                'tower': tower_display_name,               # MODIFICADO
+                'floor_number': floor_display_num_formatted, # MODIFICADO (ex: '2', '10', 'N1')
+                'capacity': floor_capacities.get(floor_key, 0),
+                'current': {
+                    'date': str(linha_atual['data'].date()),
+                    'dayOfWeek': ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'][int(linha_atual['dia_semana'])],
+                    'occupation': float(linha_atual['ocupacao_media_dia']),
+                    'temperature': float(linha_atual['temperatura']),
+                    'rain': bool(linha_atual['chuva']),
+                    'isWeekend': bool(linha_atual['eh_fds']),
+                    'isHoliday': bool(linha_atual['feriado'])
+                },
+                'forecast': forecast,
+                'historical': historico,
+                'stats': {
+                    'avgOccupation': int(round(df_floor['ocupacao_media_dia'].mean(), 0)),
+                    'maxOccupation': int(round(df_floor['ocupacao_media_dia'].max(), 0)),
+                    'minOccupation': int(round(df_floor['ocupacao_media_dia'].min(), 0)),
+                    'confidence': round(max(95 - metrics.get('smape', 30), 75), 1),
+                    'smape': round(metrics.get('smape', 0), 2),
+                    'r2': round(metrics.get('r2', 0), 4),
+                    'totalDays': len(df_floor),
+                    'peakForecastDay': {
+                        'date': max_pred_day['date'],
+                        'dayOfWeek': max_pred_day['dayOfWeek'],
+                        'predictedCount': max_pred_day['predictedCount']
+                    }
+                }
+            }
+    
+    # Salvar JSON
+    output_file = 'predicoes_modelo_floor.json'
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(dados_completos, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n{'='*60}")
+    print(f"✅ JSON GERADO COM SUCESSO!")
+    print(f"{'='*60}")
+    print(f"📁 Arquivo: {output_file}")
+    print(f"🏢 Prédios: {len(dados_completos)}")
+    
+    total_floors = sum(len(b['floors']) for b in dados_completos.values())
+    print(f"🏢 Total de andares: {total_floors}")
+    
+    print(f"\n📊 RESUMO POR PRÉDIO:")
+    for building, data in dados_completos.items():
+        print(f"\n   🏢 {data['name']}")
+        print(f"       • Andares: {data['total_floors']}")
+        print(f"       • Capacidade total: {data['total_capacity']:,} pessoas")
+        
+        if data['floors']:
+            smape_values = [f['stats']['smape'] for f in data['floors'].values() if f['stats']['smape'] > 0]
+            if smape_values:
+                avg_smape = np.mean(smape_values)
+                print(f"       • sMAPE médio: {avg_smape:.2f}%")
+    
+    return output_file
+
+if __name__ == "__main__":
+    arquivo_gerado = gerar_json_predicoes_floor()
+    
+    if arquivo_gerado:
+        print("\n" + "="*60)
+        print("🎉 PRONTO PARA USO!")
+        print("="*60)
+        print("\n📁 Arquivo gerado: predicoes_modelo_floor.json")
+        print("🔄 Próximo passo: Atualizar index.html e ml_simulation_floor.js")
+    else:
+        print("\n❌ Erro ao gerar JSON")
+<\gerar_json_floor>
+
+aqui esta o resultado do gerar_json_floor
+<results_gerar_json_floor>
+C:\Users\RHMBARD\Downloads\novo_sistema>python gerar_json_floor.py     
+===========================================================
+📊 GERANDO JSON POR ANDAR - ESTRUTURA HIERÁRQUICA
+============================================================
+
+📂 Carregando modelo treinado...
+✅ Modelo carregado: model_floor.pkl
+   • Andares válidos: 90
+📂 Carregando dados processados...
+
+✅ Andares válidos carregados: 90
+
+============================================================
+🏢 Processando: Centro Empresarial do Aço
+============================================================
+   📊 Andares neste prédio: 6
+   └─ 01
+   └─ 02
+   └─ 03
+   └─ 04
+   └─ 07
+   └─ 09
+
+============================================================
+🏢 Processando: Centro Empresarial Conceição
+============================================================
+   📊 Andares neste prédio: 69
+   └─ Torre Alfredo Egydio 1 andar
+   └─ Torre Alfredo Egydio 2 andar
+   └─ Torre Alfredo Egydio 3 andar
+   └─ Torre Alfredo Egydio 4 andar
+   └─ Torre Alfredo Egydio 5 andar
+   └─ Torre Alfredo Egydio 6 andar
+   └─ Torre Alfredo Egydio 7 andar
+   └─ Torre Alfredo Egydio 8 andar
+   └─ Torre Alfredo Egydio 9 andar
+   └─ Torre Alfredo Egydio 10 andar
+   └─ Torre Alfredo Egydio 11 andar
+   └─ Torre Alfredo Egydio 12 andar
+   └─ Torre Conceição 1 andar
+   └─ Torre Conceição 2 andar
+   └─ Torre Conceição 3 andar
+   └─ Torre Conceição 4 andar
+   └─ Torre Conceição 6 andar
+   └─ Torre Conceição 7 andar
+   └─ Torre Conceição 8 andar
+   └─ Torre Conceição 9 andar
+   └─ Torre Conceição 10 andar
+   └─ Torre Conceição 11 andar
+   └─ Torre Conceição 12 andar
+   └─ Torre Conceição PM
+   └─ Torre Eudoro Villela 1 andar
+   └─ Torre Eudoro Villela 2 andar
+   └─ Torre Eudoro Villela 3 andar
+   └─ Torre Eudoro Villela 4 andar
+   └─ Torre Eudoro Villela 5 andar
+   └─ Torre Eudoro Villela 6 andar
+   └─ Torre Eudoro Villela 7 andar
+   └─ Torre Eudoro Villela 8 andar
+   └─ Torre Eudoro Villela 9 andar
+   └─ Torre Eudoro Villela 10 andar
+   └─ Torre Eudoro Villela 12 andar
+   └─ Torre Eudoro Villela 13 andar
+   └─ Torre Jabaquara 1 andar
+   └─ Torre Jabaquara 2 andar
+   └─ Torre Jabaquara 3 andar
+   └─ Torre Jabaquara 4 andar
+   └─ Torre Jabaquara 5 andar
+   └─ Torre Jabaquara 6 andar
+   └─ Torre Jabaquara 7 andar
+   └─ Torre Jabaquara 8 andar
+   └─ Torre Jabaquara 9 andar
+   └─ Torre Jabaquara 10 andar
+   └─ Torre Jabaquara 11 andar
+   └─ Torre Jabaquara 12 andar
+   └─ Torre Olavo Setubal 1 andar
+   └─ Torre Olavo Setubal 2 andar
+   └─ Torre Olavo Setubal 3 andar
+   └─ Torre Olavo Setubal 4 andar
+   └─ Torre Olavo Setubal 5 andar
+   └─ Torre Olavo Setubal 6 andar
+   └─ Torre Olavo Setubal 7 andar
+   └─ Torre Olavo Setubal 8 andar
+   └─ Torre Olavo Setubal TERREO
+   └─ Torre Walther Moreira 1 andar
+   └─ Torre Walther Moreira 2 andar
+   └─ Torre Walther Moreira 3 andar
+   └─ Torre Walther Moreira 4 andar
+   └─ Torre Walther Moreira 5 andar
+   └─ Torre Walther Moreira 6 andar
+   └─ Torre Walther Moreira 7 andar
+   └─ Torre Walther Moreira 8 andar
+   └─ Torre Walther Moreira 9 andar
+   └─ Torre Walther Moreira 10 andar
+   └─ Torre Walther Moreira 11 andar
+   └─ Torre Walther Moreira 12 andar
+
+============================================================
+🏢 Processando: Centro Tecnológico SP
+============================================================
+   📊 Andares neste prédio: 11
+   └─ Centro Tecnológico 1 andar
+   └─ Centro Tecnológico 2 andar
+   └─ Centro Tecnológico 3 andar
+   └─ Centro Tecnológico 4 andar
+   └─ Centro Tecnológico 5 andar
+   └─ Centro Tecnológico 7 andar
+   └─ Centro Tecnológico 8 andar
+   └─ Centro Tecnológico 9 andar
+   └─ Centro Tecnológico 10 andar
+   └─ Centro Tecnológico MEZ
+   └─ Centro Tecnológico TERREO
+
+============================================================
+🏢 Processando: IBBA Faria Lima 3500
+============================================================
+   📊 Andares neste prédio: 4
+   └─ Faria Lima 3500 2 andar
+   └─ Faria Lima 3500 3 andar
+   └─ Faria Lima 3500 4 andar
+   └─ Faria Lima 3500 5 andar
+
+============================================================
+✅ JSON GERADO COM SUCESSO!
+============================================================
+📁 Arquivo: predicoes_modelo_floor.json
+🏢 Prédios: 4
+🏢 Total de andares: 90
+
+📊 RESUMO POR PRÉDIO:
+
+   🏢 Centro Empresarial do Aço
+       • Andares: 6
+       • Capacidade total: 1,962 pessoas
+       • sMAPE médio: 21.12%
+
+   🏢 Centro Empresarial Conceição
+       • Andares: 69
+       • Capacidade total: 11,596 pessoas
+       • sMAPE médio: 25.52%
+
+   🏢 Centro Tecnológico SP
+       • Andares: 11
+       • Capacidade total: 6,037 pessoas
+       • sMAPE médio: 23.91%
+
+   🏢 IBBA Faria Lima 3500
+       • Andares: 4
+       • Capacidade total: 1,996 pessoas
+       • sMAPE médio: 21.54%
+
+============================================================
+🎉 PRONTO PARA USO!
+============================================================
+
+📁 Arquivo gerado: predicoes_modelo_floor.json
+🔄 Próximo passo: Atualizar index.html e ml_simulation_floor.js
+
+C:\Users\RHMBARD\Downloads\novo_sistema><\results_gerar_json_floor>
+
+
+
+
+<dados>
+dados da base de dados e exemlo
+"data_marcacao","tipo_acesso","cod_funcionario","filial_tratado","right_descricao_local_departamento"
+"20241224","Entrada","*******","AC - CTSP (SP)","CENTRO TECNOLOGICO / 05 AND"
+"20241224","Entrada","*******","AC - CTSP (SP)","CENTRO TECNOLOGICO / 02 AND"
+"20241224","Entrada","*******","AC - Centro Empresarial (SP)","WMS / 02 AND"
+"20241224","Entrada","*******","AC - CTSP (SP)","CENTRO TECNOLOGICO / TERREO"
+"20241224","Entrada","*******","AC - Centro Empresarial (SP)","CONCEICAO / 01 AND"
+
+
+<\dados>
+
+
+<Importante>PRECISO QUE VOCE MELHORE O MAPE E O R², USE 100% DA SUA CAPACIDADE PARA PENSAR EM SOLUÇÕES E IMPLEMENTALAS, ALEM DISSO SE VOCE TIVER UM BOM RESULTADO TE DAREI 1000$ EXTRAS,CASO O RESULTADO NAO SEJA BOM IREI TROCALO POR OUTRA LLM<\importante>
+
+
+
+
+
+
+
+
