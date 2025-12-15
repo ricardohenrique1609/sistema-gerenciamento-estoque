@@ -1,1 +1,36 @@
 
+
+SELECT 
+    -- Hierarquia para o Menu
+    nome_completo_departamento_hierarquia_4 AS H5_Superintendencia,
+    nome_completo_departamento_hierarquia_5 AS H6_Gerencia,
+    
+    -- Localização para o Mapeamento
+    descricao_polo_administrativo AS Polo,
+    descricao_local_departamento AS Local_Completo, -- Aqui está o ouro: "ALFREDO EGYDIO / 07 AND"
+    
+    -- Contagem
+    COUNT(DISTINCT numero_identificador_colaborador) AS Total_Oficial
+FROM 
+    db_corp_rh_analyticsapreports_spec_01.hub_people_analytics_colaborador
+WHERE 
+    texto_cidade_local_departamento = 'SAO PAULO'
+    AND (
+        -- Filtros para pegar seus prédios alvo
+        descricao_polo_administrativo LIKE '%ACO%' OR
+        descricao_polo_administrativo LIKE '%TECNOLOGICO%' OR
+        descricao_polo_administrativo LIKE '%3400%' OR
+        descricao_polo_administrativo LIKE '%3500%' OR
+        -- As torres do CEIC muitas vezes aparecem no local ou no polo, garantimos aqui:
+        descricao_local_departamento LIKE '%CONCEICAO%' OR
+        descricao_local_departamento LIKE '%JABAQUARA%' OR
+        descricao_local_departamento LIKE '%ALFREDO EGYDIO%' OR
+        descricao_local_departamento LIKE '%WALTER MOREIRA%' OR
+        descricao_local_departamento LIKE '%OLAVO SETUBAL%' OR
+        descricao_local_departamento LIKE '%EUDORO VILLELA%'
+    )
+GROUP BY 
+    nome_completo_departamento_hierarquia_4,
+    nome_completo_departamento_hierarquia_5,
+    descricao_polo_administrativo,
+    descricao_local_departamento;
