@@ -1,314 +1,365 @@
+"""
+========================================
+GENERATE PREDICTIONS - V20 (PRODUCTION FULL)
+========================================
+1. Lógica COMPLETA de ML (Previsões, Lags, Rolling Mean).
+2. Estrutura Hierárquica (H5/H6) corrigida para o Frontend Tetris.
+3. Regex robusto e Leitura de CSV Oficial.
+========================================
+"""
+import pandas as pd
+import numpy as np
+import joblib
+import json
+import os
+import re
+from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore')
 
+# ============================================================================
+# 1. CAPACIDADES (Ajuste aqui se os % estiverem errados)
+# ============================================================================
+CAPACITY_DB = {
+    'conceicao_01': 208, 'conceicao_02': 180, 'conceicao_03': 184, 'conceicao_04': 194,
+    'conceicao_05': 162, 'conceicao_06': 162, 'conceicao_07': 162, 'conceicao_08': 162,
+    'conceicao_09': 162, 'conceicao_10': 190, 'conceicao_11': 192, 'conceicao_12': 188,
+    'conceicao_Mezanino': 150,
+    'jabaquara_02': 108, 'jabaquara_03': 152, 'jabaquara_04': 200, 'jabaquara_05': 200,
+    'jabaquara_06': 200, 'jabaquara_07': 220, 'jabaquara_08': 214, 'jabaquara_09': 200,
+    'jabaquara_10': 200, 'jabaquara_11': 200, 'jabaquara_12': 200, 'jabaquara_Mezanino': 150,
+    'walter_moreira_01': 204, 'walter_moreira_02': 200, 'walter_moreira_03': 200,
+    'walter_moreira_04': 160, 'walter_moreira_05': 200, 'walter_moreira_06': 198,
+    'walter_moreira_07': 200, 'walter_moreira_08': 200, 'walter_moreira_09': 200,
+    'walter_moreira_10': 200, 'walter_moreira_11': 200, 'walter_moreira_12': 200,
+    'walter_moreira_Mezanino': 150,
+    'olavo_setubal_01': 134, 'olavo_setubal_02': 164, 'olavo_setubal_03': 168,
+    'olavo_setubal_04': 164, 'olavo_setubal_05': 196, 'olavo_setubal_06': 108,
+    'eudoro_villela_01': 114, 'eudoro_villela_03': 141, 'eudoro_villela_04': 153,
+    'eudoro_villela_05': 174, 'eudoro_villela_06': 150, 'eudoro_villela_07': 171,
+    'eudoro_villela_08': 165, 'eudoro_villela_09': 177, 'eudoro_villela_10': 210,
+    'eudoro_villela_11': 162, 'eudoro_villela_12': 186, 'eudoro_villela_13': 186,
+    'eudoro_villela_14': 162, 'eudoro_villela_15': 186,
+    'alfredo_egydio_01': 200, 'alfredo_egydio_02': 200, 'alfredo_egydio_03': 185,
+    'alfredo_egydio_04': 198, 'alfredo_egydio_05': 174, 'alfredo_egydio_06': 200,
+    'alfredo_egydio_07': 200, 'alfredo_egydio_08': 204, 'alfredo_egydio_09': 200,
+    'alfredo_egydio_10': 214, 'alfredo_egydio_11': 206, 'alfredo_egydio_12': 134,
+    'alfredo_egydio_Mezanino': 150, 'alfredo_egydio_00': 100,
+    'ctsp_01': 602, 'ctsp_02': 726, 'ctsp_03': 703, 'ctsp_04': 708, 'ctsp_05': 645,
+    'ctsp_07': 162, 'ctsp_08': 704, 'ctsp_09': 736, 'ctsp_10': 741, 'ctsp_Mezanino': 311,
+    'ibba_fl3400_03': 348, 'ibba_fl3400_04': 150, 'ibba_fl3400_07': 256,
+    'ibba_fl3500_02': 573, 'ibba_fl3500_03': 612, 'ibba_fl3500_04': 527, 'ibba_fl3500_05': 284,
+    'cea_01': 450, 'cea_03': 461, 'cea_04': 294, 'cea_07': 592, 'cea_09': 165
+}
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Layers, RefreshCw, Building, Search, X, Users, Database, Signal } from 'lucide-react';
-import { LinearCard } from '../design/LinearCard';
-import { Badge } from '../design/badge';
+HOLIDAYS = [
+    '2024-01-01', '2024-01-25', '2024-02-12', '2024-02-13', '2024-03-29',
+    '2024-05-01', '2024-05-30', '2024-07-09', '2024-09-07', '2024-10-12',
+    '2024-11-02', '2024-11-15', '2024-11-20', '2024-12-25',
+    '2025-01-01', '2025-01-25', '2025-03-03', '2025-03-04', '2025-04-18',
+    '2025-04-21', '2025-05-01', '2025-06-19', '2025-07-09', '2025-09-07',
+    '2025-10-12', '2025-11-02', '2025-11-15', '2025-11-20', '2025-12-25'
+]
 
-export const SpaceSimulator = ({ data, onClose }) => {
-    // Estado local dos dados (para permitir simulações sem afetar o resto do app)
-    const [simData, setSimData] = useState(() => data ? JSON.parse(JSON.stringify(data)) : null);
-    const [selectedDept, setSelectedDept] = useState(null);
-    const [hoveredFloor, setHoveredFloor] = useState(null);
-    const [granularity, setGranularity] = useState('H5');
-    const [searchQuery, setSearchQuery] = useState('');
-    const [viewMode, setViewMode] = useState('official'); // 'official' ou 'wifi'
+BUILDING_NAMES = {
+    'conceicao': 'Torre Conceição', 'jabaquara': 'Torre Jabaquara',
+    'walter_moreira': 'Torre Walter Moreira', 'olavo_setubal': 'Torre Olavo Setúbal',
+    'alfredo_egydio': 'Torre Alfredo Egydio', 'eudoro_villela': 'Torre Eudoro Villela',
+    'ctsp': 'Centro Tecnológico', 'cea': 'Centro Empresarial Aço',
+    'ibba_fl3400': 'Faria Lima 3400', 'ibba_fl3500': 'Faria Lima 3500'
+}
 
-    // Limpa a seleção ao trocar de modo ou granularidade para evitar conflitos
-    useEffect(() => {
-        setSelectedDept(null);
-    }, [viewMode, granularity]);
+# ============================================================================
+# 2. CLASSES E FUNÇÕES AUXILIARES
+# ============================================================================
+class PredictionGenerator:
+    def __init__(self):
+        self.holidays = HOLIDAYS
+        self.day_names = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom']
 
-    if (!simData) return null;
+    def is_business_day(self, date):
+        if date.weekday() >= 5: return False
+        if date.strftime('%Y-%m-%d') in self.holidays: return False
+        return True
 
-    // ============================================================================
-    // 1. PROCESSAMENTO DOS DEPARTAMENTOS (Cria a lista lateral e mapeia onde eles estão)
-    // ============================================================================
-    const allDepts = useMemo(() => {
-        const depts = {};
-        if (!data) return [];
-        const targetPrefix = granularity === 'H5' ? "H5:" : "H6:";
+    def next_business_days(self, start_date, n_days=10):
+        days = []
+        curr = start_date
+        while len(days) < n_days:
+            curr += timedelta(days=1)
+            if self.is_business_day(curr):
+                days.append(curr)
+        return days
 
-        Object.entries(data).forEach(([buildingKey, building]) => {
-            if (!building.floors) return;
+def clean_floor_label(raw_label):
+    if '_' in str(raw_label): return raw_label.split('_')[-1].zfill(2)
+    return str(raw_label).zfill(2)
+
+def get_building_info(floor_id):
+    parts = floor_id.split('_', 2)
+    base_key = parts[0]
+    if len(parts) > 1 and parts[1] in ['moreira', 'setubal', 'egydio', 'villela']:
+        base_key = f"{parts[0]}_{parts[1]}"
+    if 'fl3400' in floor_id.lower(): base_key = 'ibba_fl3400'
+    elif 'fl3500' in floor_id.lower(): base_key = 'ibba_fl3500'
+    building_name = BUILDING_NAMES.get(base_key, base_key.replace('_', ' ').title())
+    return base_key, building_name
+
+# ============================================================================
+# 3. LEITURA DE HEADCOUNT OFICIAL (CORRIGIDA E ROBUSTA)
+# ============================================================================
+def identify_floor_id_from_rh(polo, local):
+    b_key = None
+    full = (str(polo) + " " + str(local)).upper()
+
+    if '3400' in full: b_key = 'ibba_fl3400'
+    elif '3500' in full: b_key = 'ibba_fl3500'
+    elif 'ACO' in full: b_key = 'cea'
+    elif 'TECNOLOGICO' in full or ' CT ' in full: b_key = 'ctsp'
+    elif 'CONCEICAO' in full: b_key = 'conceicao'
+    elif 'JABAQUARA' in full: b_key = 'jabaquara'
+    elif 'ALFREDO' in full: b_key = 'alfredo_egydio'
+    elif 'WALTER' in full: b_key = 'walter_moreira'
+    elif 'OLAVO' in full: b_key = 'olavo_setubal'
+    elif 'EUDORO' in full: b_key = 'eudoro_villela'
+    if not b_key: return None
+
+    floor_str = None
+    if 'MEZANINO' in full or ' MEZ ' in full: floor_str = 'Mezanino'
+    elif 'TERREO' in full or 'TÉRREO' in full: floor_str = '00'
+    else:
+        # Regex seguro: pega numero depois de / ou antes de AND/º
+        match = re.search(r'/\s*(\d{1,2})\b', str(local))
+        if not match: match = re.search(r'(\d{1,2})\s*(?:AND|º|°)', str(local))
+        if match: floor_str = f"{int(match.group(1)):02d}"
+    
+    return f"{b_key}_{floor_str}" if floor_str else None
+
+def load_official_headcount(csv_path='headcount_oficial.csv'):
+    if not os.path.exists(csv_path):
+        print(f"⚠️  Arquivo {csv_path} não encontrado.")
+        return {}
+
+    try:
+        df = pd.read_csv(csv_path, dtype=str)
+        df.columns = df.columns.str.strip().str.lower()
+        print(f"   ℹ️  Colunas lidas: {list(df.columns)}")
+        
+        # MAPA HIERÁRQUICO (ESSENCIAL PARA O FRONTEND DO TETRIS)
+        headcount_map = {} 
+        
+        for _, row in df.iterrows():
+            floor_id = identify_floor_id_from_rh(row.get('polo', ''), row.get('local_completo', ''))
+            if not floor_id: continue
+
+            try: count = int(float(str(row.get('total_oficial', '0')).replace(',', '.')))
+            except: count = 0
             
-            Object.values(building.floors).forEach(floor => {
-                // Ignora andares irrelevantes
-                if (floor.floor_number === '00' || floor.floor_number === 'Mezanino') return;
+            if count > 1500: continue # Ignora dados absurdos (erro de base)
 
-                // Identificador único do andar para o filtro (ex: "alfredo_egydio-07")
-                const floorUniqueId = `${buildingKey}-${floor.floor_number}`;
-
-                if (viewMode === 'official') {
-                    // --- MODO CADASTRO OFICIAL (RH) ---
-                    const officialData = floor.stats?.official_headcount;
-                    if (officialData) {
-                        // Tenta pegar o nível específico (H5/H6) ou fallback seguro
-                        const levelData = officialData[granularity] || officialData['H5'] || {};
-                        
-                        Object.entries(levelData).forEach(([deptName, count]) => {
-                            if (deptName && deptName !== 'undefined' && deptName !== 'N/D' && count > 0) {
-                                if (!depts[deptName]) depts[deptName] = { count: 0, floors: [] };
-                                depts[deptName].count += count;
-                                // Guarda onde este departamento existe
-                                depts[deptName].floors.push(floorUniqueId);
-                            }
-                        });
-                    }
-                } else {
-                    // --- MODO OCUPAÇÃO REAL (WIFI) ---
-                    const ratios = floor.stats?.hierarchy_ratios;
-                    const currentOccupancy = floor.current_ocupacao || 0;
-                    
-                    if (ratios) {
-                        Object.entries(ratios).forEach(([key, ratio]) => {
-                            if (key.startsWith(targetPrefix)) {
-                                const parts = key.substring(targetPrefix.length).split("|");
-                                const deptName = parts[parts.length - 1].trim();
-                                
-                                if (deptName) {
-                                    if (!depts[deptName]) depts[deptName] = { count: 0, floors: [] };
-                                    depts[deptName].count += Math.round(currentOccupancy * ratio);
-                                    depts[deptName].floors.push(floorUniqueId);
-                                }
-                            }
-                        });
-                    }
-                }
-            });
-        });
-
-        // Retorna lista ordenada por quantidade de pessoas
-        return Object.entries(depts)
-            .map(([name, info]) => ({ name, count: info.count, floors: info.floors }))
-            .sort((a, b) => b.count - a.count)
-            .filter(d => d.count > 0 && d.name.toLowerCase().includes(searchQuery.toLowerCase()));
-    }, [data, granularity, searchQuery, viewMode]);
-
-    // ============================================================================
-    // 2. AÇÕES DE SIMULAÇÃO
-    // ============================================================================
-    const handleSimulateMove = (targetBuildingKey, targetFloorKey) => {
-        if (!selectedDept) return;
-        const newData = JSON.parse(JSON.stringify(simData));
-        const targetFloor = newData[targetBuildingKey].floors[targetFloorKey];
+            if count > 0:
+                if floor_id not in headcount_map:
+                    # ESTRUTURA QUE O FRONTEND ESPERA
+                    headcount_map[floor_id] = { 'H5': {}, 'H6': {} }
+                
+                h5 = row.get('h5_superintendencia')
+                if h5: headcount_map[floor_id]['H5'][str(h5).strip()] = headcount_map[floor_id]['H5'].get(str(h5).strip(), 0) + count
+                
+                h6 = row.get('h6_gerencia')
+                if h6: headcount_map[floor_id]['H6'][str(h6).strip()] = headcount_map[floor_id]['H6'].get(str(h6).strip(), 0) + count
         
-        // Adiciona visualmente as pessoas do departamento selecionado
-        targetFloor.addedHeadcount = (targetFloor.addedHeadcount || 0) + selectedDept.count;
-        targetFloor.isModified = true;
+        print(f" ✅ RH Carregado: {len(headcount_map)} andares mapeados.")
+        return headcount_map
+    except Exception as e:
+        print(f"❌ Erro CSV: {e}")
+        return {}
+
+# ============================================================================
+# 4. GERAÇÃO PRINCIPAL
+# ============================================================================
+def generate_predictions():
+    print("="*60 + "\n🔮 GERAÇÃO DE PREVISÕES - V20 (FULL PRODUCTION)\n" + "="*60)
+
+    # --- 1. CARREGA MODELOS E DADOS ML ---
+    print("\n[1/5] Carregando modelos...")
+    try:
+        data_pack = joblib.load('model_floors.pkl')
+        models = data_pack['models']
+        stored_metrics = data_pack['metrics']
+        floor_profiles = data_pack.get('floor_profiles', {})
+        correction_factors = data_pack.get('correction_factors', {})
+
+        df_ml = pd.read_csv('data_ml_floors.csv')
+        df_ml['data'] = pd.to_datetime(df_ml['data'])
+
+        df_hier = pd.read_csv('data_hierarchy_daily.csv')
+        df_hier['data'] = pd.to_datetime(df_hier['data'])
+
+        with open('hierarchy_data.json', 'r', encoding='utf-8') as f:
+            hierarchy_data = json.load(f)
+        menu_tree = hierarchy_data['menu']
+        ratios_map = hierarchy_data['ratios']
+
+        # CARREGA O NOVO CSV DE RH
+        official_data = load_official_headcount('headcount_oficial.csv')
+
+        print(f" ✓ {len(models)} modelos carregados")
+        print(f" ✓ {len(df_ml):,} registros ML")
+    except Exception as e:
+        print(f" ❌ ERRO: {e}")
+        exit(1)
+
+    # --- 2. DEFINE DATA E PROCESSA HISTÓRICO ---
+    print("\n[2/5] Processando histórico...")
+    today_ref = pd.Timestamp(datetime.now().date())
+    max_data_date = pd.to_datetime(df_ml['data']).max()
+    last_data_date = min(max_data_date, today_ref)
+    
+    # Filtra dados até hoje
+    df_ml = df_ml[df_ml['data'] <= today_ref].copy()
+    df_hier = df_hier[df_hier['data'] <= today_ref].copy()
+
+    # Processa Hierarquia WiFi (Para a aba "Ocupação Real")
+    hierarchy_by_floor = {}
+    for _, row in df_hier.iterrows():
+        date_str = row['data'].strftime('%Y-%m-%d')
+        if date_str in HOLIDAYS: continue
+        fid = row['floor_id']
+        if fid not in hierarchy_by_floor: hierarchy_by_floor[fid] = {}
+        if date_str not in hierarchy_by_floor[fid]: hierarchy_by_floor[fid][date_str] = {}
         
-        setSimData(newData);
-        setSelectedDept(null); // Limpa seleção após mover
-    };
+        vals = [row['h4'], row['h5'], row['h6']]
+        for lvl, prefix in zip([1,2,3], ['H4','H5','H6']):
+            sub_vals = vals[:lvl]
+            if all(v != 'NAO_IDENTIFICADO' for v in sub_vals):
+                key = f"{prefix}:{('\n'.join(sub_vals))}"
+                if key not in hierarchy_by_floor[fid][date_str]: hierarchy_by_floor[fid][date_str][key] = 0
+                hierarchy_by_floor[fid][date_str][key] += int(row['pessoas'])
 
-    const resetSimulation = () => {
-        setSimData(JSON.parse(JSON.stringify(data)));
-        setSelectedDept(null);
-    };
+    # --- 3. GERAÇÃO DE PREVISÕES ML + INTEGRAÇÃO RH ---
+    print("\n[3/5] Gerando previsões e integrando dados...")
+    output = {}
+    generator = PredictionGenerator()
+    processed = 0
 
-    return (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div
-                initial={{ scale: 0.98, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="bg-[#F8F9FA] w-full h-[90vh] max-w-[95vw] rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
-            >
-                {/* --- HEADER --- */}
-                <div className="px-6 py-4 bg-white border-b border-slate-200 flex justify-between items-center shrink-0 shadow-sm z-20">
-                    <div className="flex items-center gap-6">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2.5 bg-indigo-50 rounded-xl border border-indigo-100">
-                                <Layers className="text-indigo-600" size={20} />
-                            </div>
-                            <div>
-                                <h2 className="text-lg font-bold text-slate-800 leading-none">Space Tetris</h2>
-                                <p className="text-xs text-slate-500 font-medium mt-1">
-                                    {selectedDept ? 
-                                        <span className="text-indigo-600 font-bold">Filtrando: {selectedDept.name}</span> 
-                                        : 'Planejamento de Espaços'}
-                                </p>
-                            </div>
-                        </div>
+    for floor_id, model in models.items():
+        b_key, b_name = get_building_info(floor_id)
+        f_label = clean_floor_label(floor_id)
+        c_factor = correction_factors.get(floor_id, 1.0)
 
-                        {/* Switch de Modo */}
-                        <div className="bg-slate-100 p-1 rounded-lg border border-slate-200 flex">
-                            <button onClick={() => setViewMode('official')} className={`flex items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-md transition-all ${viewMode === 'official' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                                <Database size={14} /> Cadastro Oficial
-                            </button>
-                            <button onClick={() => setViewMode('wifi')} className={`flex items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-md transition-all ${viewMode === 'wifi' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-                                <Signal size={14} /> Ocupação Real
-                            </button>
-                        </div>
+        df_floor = df_ml[df_ml['floor_id'] == floor_id].sort_values('data')
+        if len(df_floor) == 0: continue
 
-                        <div className="h-8 w-px bg-slate-200 hidden sm:block"></div>
-                        
-                        {/* Switch de Granularidade */}
-                        <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
-                            <button onClick={() => setGranularity('H5')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${granularity === 'H5' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Superintendências</button>
-                            <button onClick={() => setGranularity('H6')} className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${granularity === 'H6' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Gerências</button>
-                        </div>
-                    </div>
-                    <div className="flex gap-3">
-                        <button onClick={resetSimulation} className="px-4 py-2 text-slate-600 font-bold text-xs hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-2"><RefreshCw size={14} /> Resetar</button>
-                        <button onClick={onClose} className="px-5 py-2 bg-slate-800 text-white font-bold text-xs rounded-lg hover:bg-slate-700 transition-colors shadow-lg shadow-slate-200 flex items-center gap-2"><X size={16} /> Fechar</button>
-                    </div>
-                </div>
+        # Histórico (Últimos 30 dias)
+        historical = []
+        for _, row in df_floor.tail(30).iterrows():
+            d_str = row['data'].strftime('%Y-%m-%d')
+            if d_str in HOLIDAYS: continue
+            historical.append({
+                'date': d_str,
+                'dayOfWeek': generator.day_names[row['data'].dayofweek],
+                'ocupacao': int(row['total_pessoas']),
+                'hierarchy': hierarchy_by_floor.get(floor_id, {}).get(d_str, {})
+            })
 
-                <div className="flex-1 flex overflow-hidden">
-                    {/* --- SIDEBAR (Lista de Times) --- */}
-                    <div className="w-80 bg-white border-r border-slate-200 flex flex-col z-10 shrink-0">
-                        <div className="p-4 border-b border-slate-100 bg-slate-50/50">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                                <input type="text" placeholder="Buscar time..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" />
-                            </div>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-                            <div className="flex items-center justify-between px-2 mb-2 mt-1">
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                                    {viewMode === 'official' ? 'Headcount Contratado' : 'Pessoas Presentes'}
-                                </p>
-                                <Badge variant={viewMode === 'official' ? "info" : "warning"} size="sm">{allDepts.length}</Badge>
-                            </div>
-                            
-                            {allDepts.length === 0 ? <div className="text-center text-slate-400 text-xs py-10">Nada encontrado</div> : allDepts.map(dept => (
-                                <button key={dept.name} onClick={() => setSelectedDept(dept.name === selectedDept?.name ? null : dept)} className={`w-full group text-left p-3 rounded-xl border transition-all duration-200 relative overflow-hidden flex justify-between items-center ${selectedDept?.name === dept.name ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/30 ring-2 ring-indigo-100' : 'bg-white border-slate-100 text-slate-600 hover:border-indigo-200 hover:shadow-md'}`}>
-                                    <div className="flex items-center gap-3 overflow-hidden">
-                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[10px] shrink-0 ${selectedDept?.name === dept.name ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>{dept.name.substring(0, 2).toUpperCase()}</div>
-                                        <span className="font-medium text-xs truncate max-w-[60%]" title={dept.name}>{dept.name}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        <span className={`text-xs font-bold ${selectedDept?.name === dept.name ? 'text-white' : 'text-slate-700'}`}>{dept.count}</span>
-                                        <Users size={12} className={selectedDept?.name === dept.name ? 'text-white/70' : 'text-slate-400'} />
-                                    </div>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+        # Estado Atual (Para lags do ML)
+        ref_data = df_floor[df_floor['data'] == last_data_date]
+        last_row = ref_data.iloc[-1] if len(ref_data) > 0 else df_floor.iloc[-1]
+        
+        current_occupancy = int(last_row['total_pessoas'])
+        # Recupera lags se existirem, senão usa valor atual
+        lag_1 = float(last_row['total_pessoas'])
+        lag_2 = float(last_row.get('lag_1d', lag_1))
+        lag_7 = float(last_row.get('lag_7d', lag_1))
+        roll_7 = float(last_row.get('rolling_7d', lag_1))
 
-                    {/* --- ÁREA PRINCIPAL (SKYLINE) --- */}
-                    <div className="flex-1 p-8 overflow-auto bg-slate-50/50">
-                        <div className="flex gap-8 min-h-full items-end pb-4 px-2">
-                            {Object.entries(simData).map(([bKey, building]) => {
-                                // --- FILTRO MÁGICO ---
-                                // Filtra quais andares devem aparecer
-                                const relevantFloors = Object.entries(building.floors).filter(([fKey, floor]) => {
-                                    if (floor.floor_number === '00' || floor.floor_number === 'Mezanino') return false;
-                                    
-                                    // Se tem departamento selecionado, SÓ MOSTRA SE ELE ESTIVER LÁ
-                                    if (selectedDept) {
-                                        return selectedDept.floors.includes(`${bKey}-${floor.floor_number}`);
-                                    }
-                                    return true; // Se não tem seleção, mostra tudo
-                                });
+        # --- O CORAÇÃO DO ML (Previsão para 10 dias) ---
+        forecast_days = []
+        business_days = generator.next_business_days(today_ref, n_days=10)
+        
+        for future_date in business_days:
+            dia_sem = future_date.weekday()
+            media_dia = floor_profiles.get(floor_id, {}).get(dia_sem, 0)
 
-                                // Se o prédio não tem nenhum andar relevante, esconde o prédio inteiro
-                                if (relevantFloors.length === 0) return null;
+            # Monta features para o modelo
+            input_data = pd.DataFrame([{
+                'dia_semana': dia_sem,
+                'mes': future_date.month,
+                'lag_1d': lag_1,
+                'lag_2d': lag_2,
+                'lag_7d': lag_7,
+                'rolling_7d': roll_7,
+                'media_dia_semana': media_dia
+            }])
 
-                                return (
-                                    <div key={bKey} className="flex flex-col items-center min-w-[260px] max-w-[280px]">
-                                        {/* Nome do Prédio */}
-                                        <div className="mb-4 text-center order-first">
-                                            <div className="w-10 h-10 bg-white rounded-xl border border-slate-200 flex items-center justify-center mx-auto mb-2 shadow-sm">
-                                                <Building size={20} className="text-slate-400" />
-                                            </div>
-                                            <h3 className="font-black text-slate-700 text-xs uppercase tracking-wide">{building.name}</h3>
-                                            <span className="text-[10px] text-slate-400 font-bold">
-                                                {selectedDept ? `${relevantFloors.length} andares com o time` : `${relevantFloors.length} andares`}
-                                            </span>
-                                        </div>
+            # Predição
+            try:
+                raw_pred = float(max(0, model.predict(input_data)[0]))
+                pred = raw_pred * c_factor
+                
+                # Suavização conservadora
+                if media_dia > 0 and pred > media_dia * 1.5:
+                    pred = (pred + media_dia) / 2
+                
+                final_val = int(round(pred))
+            except:
+                final_val = int(media_dia) # Fallback seguro
+                pred = media_dia
 
-                                        {/* Stack de Andares */}
-                                        <div className="w-full bg-white p-2 rounded-2xl border border-slate-200 shadow-xl shadow-slate-200/50 flex flex-col-reverse gap-1 relative z-0 hover:z-10 transition-all">
-                                            <div className="absolute -top-2 left-4 right-4 h-2 bg-slate-200 rounded-t-md opacity-50" />
+            forecast_days.append({
+                'date': future_date.strftime('%Y-%m-%d'),
+                'dayOfWeek': generator.day_names[dia_sem],
+                'predictedCount': final_val
+            })
 
-                                            {relevantFloors
-                                                .sort((a, b) => {
-                                                    const numA = parseInt(a[1].floor_number) || 0;
-                                                    const numB = parseInt(b[1].floor_number) || 0;
-                                                    return numA - numB;
-                                                })
-                                                .map(([fKey, floor]) => {
-                                                    const capacity = floor.stats?.capacity || 100;
-                                                    const safeCap = capacity > 0 ? capacity : 1;
-                                                    let baseCount = 0;
-                                                    
-                                                    // Define qual número mostrar na barra
-                                                    if (viewMode === 'official') {
-                                                        const officialData = floor.stats?.official_headcount;
-                                                        if (officialData) {
-                                                            // Soma total de cadastrados neste andar (de todos os times)
-                                                            const levelData = officialData[granularity] || officialData['H5'] || {};
-                                                            baseCount = Object.values(levelData).reduce((a, b) => a + b, 0);
-                                                        }
-                                                    } else {
-                                                        baseCount = floor.current_ocupacao || 0;
-                                                    }
+            # Atualiza lags para o próximo loop (feedback loop)
+            lag_2, lag_1 = lag_1, pred
+            roll_7 = (roll_7 * 6 + pred) / 7
 
-                                                    let currentVal = baseCount + (floor.addedHeadcount || 0);
-                                                    let isHovering = hoveredFloor === `${bKey}-${fKey}`;
-                                                    let previewVal = currentVal;
-                                                    
-                                                    if (selectedDept && isHovering) previewVal += selectedDept.count;
-                                                    
-                                                    const pct = Math.round((previewVal / safeCap) * 100);
-                                                    const visualPct = Math.min(pct, 100);
+        # --- MONTAGEM DO OBJETO DO ANDAR ---
+        if b_key not in output:
+            output[b_key] = {
+                'name': b_name,
+                'floors': {}
+            }
+        
+        # Capacidade e Dados Oficiais
+        capacity = CAPACITY_DB.get(floor_id, 100)
+        stats_obj = stored_metrics.get(floor_id, {})
+        stats_obj['capacity'] = int(capacity)
+        stats_obj['hierarchy_ratios'] = ratios_map.get(floor_id, {})
+        
+        # INJEÇÃO CRÍTICA DO DADO OFICIAL
+        stats_obj['official_headcount'] = official_data.get(floor_id, {})
 
-                                                    // Cores
-                                                    let bgClass = viewMode === 'official' ? "bg-slate-50 border-slate-200" : "bg-emerald-50 border-emerald-100";
-                                                    let progressColor = viewMode === 'official' ? "bg-indigo-500" : "bg-emerald-500";
-                                                    let textColor = viewMode === 'official' ? "text-indigo-700" : "text-emerald-700";
-                                                    
-                                                    if (viewMode === 'wifi') {
-                                                        if (pct > 70) { bgClass = "bg-amber-50 border-amber-100 hover:bg-amber-100"; progressColor = "bg-amber-500"; textColor = "text-amber-700"; }
-                                                        if (pct > 90) { bgClass = "bg-red-50 border-red-100 hover:bg-red-100"; progressColor = "bg-red-500"; textColor = "text-red-700"; }
-                                                    } else {
-                                                        if (pct > 100) { progressColor = "bg-red-500"; textColor = "text-red-700"; }
-                                                    }
+        output[b_key]['floors'][f_label] = {
+            'floor_number': f_label,
+            'current_ocupacao': current_occupancy,
+            'historical': historical,
+            'forecast': forecast_days,
+            'stats': stats_obj
+        }
+        processed += 1
 
-                                                    // Destaque se o andar passou no filtro
-                                                    if (selectedDept) {
-                                                        bgClass = "bg-indigo-50 border-indigo-500 ring-1 ring-indigo-200 shadow-md transform scale-[1.02] z-10";
-                                                    }
+    print(f" ✓ {processed} andares processados e previstos.")
 
-                                                    return (
-                                                        <button
-                                                            key={fKey}
-                                                            onClick={() => handleSimulateMove(bKey, fKey)}
-                                                            onMouseEnter={() => setHoveredFloor(`${bKey}-${fKey}`)}
-                                                            onMouseLeave={() => setHoveredFloor(null)}
-                                                            className={`relative w-full h-12 rounded-lg border transition-all duration-200 flex items-center px-3 gap-3 ${bgClass} hover:shadow-md cursor-pointer`}
-                                                        >
-                                                            <div className="w-6 text-center shrink-0">
-                                                                <span className="text-[10px] font-black text-slate-400 block">{floor.floor_number}º</span>
-                                                            </div>
-                                                            <div className="flex-1 flex flex-col justify-center min-w-0">
-                                                                <div className="flex justify-between items-end mb-1">
-                                                                    <span className="text-[10px] font-bold text-slate-500 truncate flex items-center gap-1">
-                                                                        {viewMode === 'official' && <Database size={8} className="text-slate-300" />}
-                                                                        {floor.isModified && <span className="text-indigo-600 font-extrabold flex items-center gap-0.5">+{floor.addedHeadcount}</span>}
-                                                                    </span>
-                                                                    <span className={`text-[10px] font-black ${textColor}`}>
-                                                                        {pct}% <span className="text-slate-400 font-medium opacity-70">({previewVal})</span>
-                                                                    </span>
-                                                                </div>
-                                                                <div className="w-full h-1.5 bg-white/60 rounded-full overflow-hidden relative shadow-inner">
-                                                                    <div className={`h-full absolute left-0 top-0 transition-all duration-300 ${progressColor}`} style={{ width: `${visualPct}%` }} />
-                                                                </div>
-                                                            </div>
-                                                        </button>
-                                                    );
-                                                })}
-                                        </div>
-                                        <div className="w-[90%] h-3 bg-slate-300 rounded-b-xl mt-0.5 mx-auto opacity-40 order-last" />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </div>
-            </motion.div>
-        </div>
-    );
-};
+    # --- 4. JSON FINAL ---
+    print("\n[4/5] Salvando JSON...")
+    final_json = {
+        "buildings": output,
+        "hierarchy_menu": menu_tree,
+        "hierarchy_history": hierarchy_history, # Histórico global para gráficos
+        "metadata": {
+            "reference_date": today_ref.strftime('%Y-%m-%d'),
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "data_source": "REAL"
+        }
+    }
+    
+    with open('predicoes.json', 'w', encoding='utf-8') as f:
+        json.dump(final_json, f, indent=2, ensure_ascii=False)
+    print(" ✅ JSON salvo: predicoes.json")
+    print("="*60 + "\n✅ PROCESSO CONCLUÍDO COM SUCESSO!\n" + "="*60)
+
+if __name__ == "__main__":
+    generate_predictions()
