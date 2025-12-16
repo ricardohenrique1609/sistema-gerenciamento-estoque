@@ -145,7 +145,7 @@ def load_official_headcount(csv_path='headcount_oficial.csv'):
         df.columns = df.columns.str.strip().str.lower()
         print(f"   ℹ️  Colunas lidas: {list(df.columns)}")
         
-        # MAPA HIERÁRQUICO (ESSENCIAL PARA O FRONTEND DO TETRIS)
+        # MAPA HIERÁRQUICO (ESSENCIAL PARA O FRONTEND V19)
         headcount_map = {} 
         
         for _, row in df.iterrows():
@@ -155,7 +155,7 @@ def load_official_headcount(csv_path='headcount_oficial.csv'):
             try: count = int(float(str(row.get('total_oficial', '0')).replace(',', '.')))
             except: count = 0
             
-            if count > 1500: continue # Ignora dados absurdos (erro de base)
+            if count > 1500: continue # Ignora dados absurdos
 
             if count > 0:
                 if floor_id not in headcount_map:
@@ -267,7 +267,6 @@ def generate_predictions():
         last_row = ref_data.iloc[-1] if len(ref_data) > 0 else df_floor.iloc[-1]
         
         current_occupancy = int(last_row['total_pessoas'])
-        # Recupera lags se existirem, senão usa valor atual
         lag_1 = float(last_row['total_pessoas'])
         lag_2 = float(last_row.get('lag_1d', lag_1))
         lag_7 = float(last_row.get('lag_7d', lag_1))
@@ -348,7 +347,7 @@ def generate_predictions():
     final_json = {
         "buildings": output,
         "hierarchy_menu": menu_tree,
-        "hierarchy_history": hierarchy_history, # Histórico global para gráficos
+        "hierarchy_history": hierarchy_history, 
         "metadata": {
             "reference_date": today_ref.strftime('%Y-%m-%d'),
             "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
