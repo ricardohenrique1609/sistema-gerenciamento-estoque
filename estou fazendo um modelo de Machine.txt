@@ -1,394 +1,49 @@
-"""
-========================================
-GENERATE PREDICTIONS - V21 (FULL EXTENDED)
-========================================
-1. Lógica ML Completa (Igual V13 original).
-2. Histórico Global de Hierarquia (Restaurado).
-3. Correção para Space Tetris (H5/H6 e CSV Oficial).
-4. Regex Robusto e Capacidades Ajustáveis.
-========================================
-"""
-import pandas as pd
-import numpy as np
-import joblib
-import json
-import os
-import re
-from datetime import datetime, timedelta
-import warnings
-warnings.filterwarnings('ignore')
-
-# ============================================================================
-# 1. CONFIGURAÇÕES E CAPACIDADES
-# ============================================================================
-HOLIDAYS = [
-    '2024-01-01', '2024-01-25', '2024-02-12', '2024-02-13', '2024-03-29',
-    '2024-05-01', '2024-05-30', '2024-07-09', '2024-09-07', '2024-10-12',
-    '2024-11-02', '2024-11-15', '2024-11-20', '2024-12-25',
-    '2025-01-01', '2025-01-25', '2025-03-03', '2025-03-04', '2025-04-18',
-    '2025-04-21', '2025-05-01', '2025-06-19', '2025-07-09', '2025-09-07',
-    '2025-10-12', '2025-11-02', '2025-11-15', '2025-11-20', '2025-12-25'
-]
-
-CAPACITY_DB = {
-    'conceicao_01': 208, 'conceicao_02': 180, 'conceicao_03': 184, 'conceicao_04': 194,
-    'conceicao_05': 162, 'conceicao_06': 162, 'conceicao_07': 162, 'conceicao_08': 162,
-    'conceicao_09': 162, 'conceicao_10': 190, 'conceicao_11': 192, 'conceicao_12': 188,
-    'conceicao_Mezanino': 150,
-    'jabaquara_02': 108, 'jabaquara_03': 152, 'jabaquara_04': 200, 'jabaquara_05': 200,
-    'jabaquara_06': 200, 'jabaquara_07': 220, 'jabaquara_08': 214, 'jabaquara_09': 200,
-    'jabaquara_10': 200, 'jabaquara_11': 200, 'jabaquara_12': 200, 'jabaquara_Mezanino': 150,
-    'walter_moreira_01': 204, 'walter_moreira_02': 200, 'walter_moreira_03': 200,
-    'walter_moreira_04': 160, 'walter_moreira_05': 200, 'walter_moreira_06': 198,
-    'walter_moreira_07': 200, 'walter_moreira_08': 200, 'walter_moreira_09': 200,
-    'walter_moreira_10': 200, 'walter_moreira_11': 200, 'walter_moreira_12': 200,
-    'walter_moreira_Mezanino': 150,
-    'olavo_setubal_01': 134, 'olavo_setubal_02': 164, 'olavo_setubal_03': 168,
-    'olavo_setubal_04': 164, 'olavo_setubal_05': 196, 'olavo_setubal_06': 108,
-    'eudoro_villela_01': 114, 'eudoro_villela_03': 141, 'eudoro_villela_04': 153,
-    'eudoro_villela_05': 174, 'eudoro_villela_06': 150, 'eudoro_villela_07': 171,
-    'eudoro_villela_08': 165, 'eudoro_villela_09': 177, 'eudoro_villela_10': 210,
-    'eudoro_villela_11': 162, 'eudoro_villela_12': 186, 'eudoro_villela_13': 186,
-    'eudoro_villela_14': 162, 'eudoro_villela_15': 186,
-    'alfredo_egydio_01': 200, 'alfredo_egydio_02': 200, 'alfredo_egydio_03': 185,
-    'alfredo_egydio_04': 198, 'alfredo_egydio_05': 174, 'alfredo_egydio_06': 200,
-    'alfredo_egydio_07': 200, 'alfredo_egydio_08': 204, 'alfredo_egydio_09': 200,
-    'alfredo_egydio_10': 214, 'alfredo_egydio_11': 206, 'alfredo_egydio_12': 134,
-    'alfredo_egydio_Mezanino': 150, 'alfredo_egydio_00': 100,
-    'ctsp_01': 602, 'ctsp_02': 726, 'ctsp_03': 703, 'ctsp_04': 708, 'ctsp_05': 645,
-    'ctsp_07': 162, 'ctsp_08': 704, 'ctsp_09': 736, 'ctsp_10': 741, 'ctsp_Mezanino': 311,
-    'ibba_fl3400_03': 348, 'ibba_fl3400_04': 150, 'ibba_fl3400_07': 256,
-    'ibba_fl3500_02': 573, 'ibba_fl3500_03': 612, 'ibba_fl3500_04': 527, 'ibba_fl3500_05': 284,
-    'cea_01': 450, 'cea_03': 461, 'cea_04': 294, 'cea_07': 592, 'cea_09': 165
-}
-
-BUILDING_NAMES = {
-    'conceicao': 'Torre Conceição', 'jabaquara': 'Torre Jabaquara',
-    'walter_moreira': 'Torre Walter Moreira', 'olavo_setubal': 'Torre Olavo Setúbal',
-    'alfredo_egydio': 'Torre Alfredo Egydio', 'eudoro_villela': 'Torre Eudoro Villela',
-    'ctsp': 'Centro Tecnológico', 'cea': 'Centro Empresarial Aço',
-    'ibba_fl3400': 'Faria Lima 3400', 'ibba_fl3500': 'Faria Lima 3500'
-}
-
-# ============================================================================
-# 2. CLASSES E FUNÇÕES AUXILIARES
-# ============================================================================
-class PredictionGenerator:
-    def __init__(self):
-        self.holidays = HOLIDAYS
-        self.day_names = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom']
-
-    def is_business_day(self, date):
-        if date.weekday() >= 5: return False
-        if date.strftime('%Y-%m-%d') in self.holidays: return False
-        return True
-
-    def next_business_days(self, start_date, n_days=10):
-        days = []
-        curr = start_date
-        while len(days) < n_days:
-            curr += timedelta(days=1)
-            if self.is_business_day(curr):
-                days.append(curr)
-        return days
-
-def clean_floor_label(raw_label):
-    if '_' in str(raw_label):
-        parts = str(raw_label).split('_')
-        candidate = parts[-1]
-        if candidate.isdigit(): return f"{int(candidate):02d}"
-        return candidate.title()
-    if str(raw_label).isdigit(): return f"{int(raw_label):02d}"
-    return str(raw_label).title()
-
-def get_building_info(floor_id):
-    parts = floor_id.split('_', 2)
-    base_key = parts[0]
-    if len(parts) > 1 and parts[1] in ['moreira', 'setubal', 'egydio', 'villela']:
-        base_key = f"{parts[0]}_{parts[1]}"
-    if 'fl3400' in floor_id.lower(): base_key = 'ibba_fl3400'
-    elif 'fl3500' in floor_id.lower(): base_key = 'ibba_fl3500'
-    building_name = BUILDING_NAMES.get(base_key, base_key.replace('_', ' ').title())
-    return base_key, building_name
-
-# ============================================================================
-# 3. LEITURA DE HEADCOUNT OFICIAL (CORRIGIDA)
-# ============================================================================
-def identify_floor_id_from_rh(polo, local):
-    b_key = None
-    full = (str(polo) + " " + str(local)).upper()
-
-    if '3400' in full: b_key = 'ibba_fl3400'
-    elif '3500' in full: b_key = 'ibba_fl3500'
-    elif 'ACO' in full: b_key = 'cea'
-    elif 'TECNOLOGICO' in full or ' CT ' in full: b_key = 'ctsp'
-    elif 'CONCEICAO' in full: b_key = 'conceicao'
-    elif 'JABAQUARA' in full: b_key = 'jabaquara'
-    elif 'ALFREDO' in full: b_key = 'alfredo_egydio'
-    elif 'WALTER' in full: b_key = 'walter_moreira'
-    elif 'OLAVO' in full: b_key = 'olavo_setubal'
-    elif 'EUDORO' in full: b_key = 'eudoro_villela'
-    if not b_key: return None
-
-    floor_str = None
-    if 'MEZANINO' in full or ' MEZ ' in full: floor_str = 'Mezanino'
-    elif 'TERREO' in full or 'TÉRREO' in full: floor_str = '00'
-    else:
-        # Regex seguro: pega numero depois de / ou antes de AND/º
-        match = re.search(r'/\s*(\d{1,2})\b', str(local))
-        if not match: match = re.search(r'(\d{1,2})\s*(?:AND|º|°)', str(local))
-        if match: floor_str = f"{int(match.group(1)):02d}"
+SELECT 
+    -- Níveis Hierárquicos
+    nome_completo_departamento_hierarquia_4 AS h5_superintendencia,
+    nome_completo_departamento_hierarquia_5 AS h6_gerencia,
     
-    return f"{b_key}_{floor_str}" if floor_str else None
-
-def load_official_headcount(csv_path='headcount_oficial.csv'):
-    if not os.path.exists(csv_path):
-        print(f"⚠️  Arquivo {csv_path} não encontrado.")
-        return {}
-
-    try:
-        df = pd.read_csv(csv_path, dtype=str)
-        df.columns = df.columns.str.strip().str.lower()
-        print(f"   ℹ️  Colunas lidas: {list(df.columns)}")
-        
-        # MAPA HIERÁRQUICO (ESSENCIAL PARA O TETRIS)
-        headcount_map = {} 
-        
-        for _, row in df.iterrows():
-            floor_id = identify_floor_id_from_rh(row.get('polo', ''), row.get('local_completo', ''))
-            if not floor_id: continue
-
-            try: count = int(float(str(row.get('total_oficial', '0')).replace(',', '.')))
-            except: count = 0
-            
-            if count > 1500: continue # Ignora dados absurdos
-
-            if count > 0:
-                if floor_id not in headcount_map:
-                    # ESTRUTURA QUE O FRONTEND ESPERA
-                    headcount_map[floor_id] = { 'H5': {}, 'H6': {} }
-                
-                h5 = row.get('h5_superintendencia')
-                if h5: headcount_map[floor_id]['H5'][str(h5).strip()] = headcount_map[floor_id]['H5'].get(str(h5).strip(), 0) + count
-                
-                h6 = row.get('h6_gerencia')
-                if h6: headcount_map[floor_id]['H6'][str(h6).strip()] = headcount_map[floor_id]['H6'].get(str(h6).strip(), 0) + count
-        
-        print(f" ✅ RH Carregado: {len(headcount_map)} andares mapeados.")
-        return headcount_map
-    except Exception as e:
-        print(f"❌ Erro CSV: {e}")
-        return {}
-
-# ============================================================================
-# 4. GERAÇÃO PRINCIPAL
-# ============================================================================
-def generate_predictions():
-    print("="*70 + "\n🔮 GERAÇÃO DE PREVISÕES - V21 (FULL EXTENDED)\n" + "="*70)
-
-    # --- [1/7] CARREGA MODELOS E DADOS ---
-    print("\n[1/7] Carregando modelos e dados...")
-    try:
-        data_pack = joblib.load('model_floors.pkl')
-        models = data_pack['models']
-        stored_metrics = data_pack['metrics']
-        floor_profiles = data_pack.get('floor_profiles', {})
-        correction_factors = data_pack.get('correction_factors', {})
-
-        df_ml = pd.read_csv('data_ml_floors.csv')
-        df_ml['data'] = pd.to_datetime(df_ml['data'])
-
-        df_hier = pd.read_csv('data_hierarchy_daily.csv')
-        df_hier['data'] = pd.to_datetime(df_hier['data'])
-
-        with open('hierarchy_data.json', 'r', encoding='utf-8') as f:
-            hierarchy_data = json.load(f)
-        menu_tree = hierarchy_data['menu']
-        ratios_map = hierarchy_data['ratios']
-
-        # CARREGA O NOVO CSV DE RH
-        official_data = load_official_headcount('headcount_oficial.csv')
-
-        print(f" ✓ {len(models)} modelos carregados")
-        print(f" ✓ {len(df_ml):,} registros ML")
-    except Exception as e:
-        print(f" ❌ ERRO: {e}")
-        exit(1)
-
-    # --- [2/7] DEFINE DATA ---
-    print("\n[2/7] Definindo data de referência...")
-    today_ref = pd.Timestamp(datetime.now().date())
-    max_data_date = pd.to_datetime(df_ml['data']).max()
-    last_data_date = min(max_data_date, today_ref)
+    -- Localização
+    descricao_polo_administrativo AS polo,
+    descricao_local_departamento AS local_completo,
     
-    # Filtra dados até hoje
-    df_ml = df_ml[df_ml['data'] <= today_ref].copy()
-    df_hier = df_hier[df_hier['data'] <= today_ref].copy()
+    -- Contagem (Headcount Único Ativo HOJE)
+    COUNT(DISTINCT codigo_racf) AS total_oficial
 
-    # --- [3/7] PROCESSA HISTÓRICO HIERARQUIA (POR ANDAR) ---
-    print("\n[3/7] Processando histórico de hierarquia (Local)...")
-    hierarchy_by_floor = {}
-    for _, row in df_hier.iterrows():
-        date_str = row['data'].strftime('%Y-%m-%d')
-        if date_str in HOLIDAYS: continue
-        fid = row['floor_id']
-        if fid not in hierarchy_by_floor: hierarchy_by_floor[fid] = {}
-        if date_str not in hierarchy_by_floor[fid]: hierarchy_by_floor[fid][date_str] = {}
-        
-        vals = [row['h4'], row['h5'], row['h6']]
-        for lvl, prefix in zip([1,2,3], ['H4','H5','H6']):
-            sub_vals = vals[:lvl]
-            if all(v != 'NAO_IDENTIFICADO' for v in sub_vals):
-                key = f"{prefix}:{('\n'.join(sub_vals))}"
-                if key not in hierarchy_by_floor[fid][date_str]: hierarchy_by_floor[fid][date_str][key] = 0
-                hierarchy_by_floor[fid][date_str][key] += int(row['pessoas'])
+FROM 
+    db_corp_rh_analyticsapreports_spec_01.hub_people_analytics_colaborador
 
-    # --- [4/7] INICIALIZAÇÃO ---
-    print("\n[4/7] Inicializando estruturas...")
-    output = {}
-    generator = PredictionGenerator()
-    processed = 0
-
-    # --- [5/7] GERAÇÃO DE PREVISÕES ML + INTEGRAÇÃO RH ---
-    print("\n[5/7] Gerando previsões...")
+WHERE 
+    texto_cidade_local_departamento = 'SAO PAULO'
+    AND situacao_colaborador = 'ATIVO'
     
-    for floor_id, model in models.items():
-        b_key, b_name = get_building_info(floor_id)
-        f_label = clean_floor_label(floor_id)
-        c_factor = correction_factors.get(floor_id, 1.0)
+    -- !!! FILTRO CRUCIAL: PEGA APENAS A FOTO MAIS RECENTE !!!
+    AND data_referencia = (
+        SELECT MAX(data_referencia) 
+        FROM db_corp_rh_analyticsapreports_spec_01.hub_people_analytics_colaborador
+    )
 
-        df_floor = df_ml[df_ml['floor_id'] == floor_id].sort_values('data')
-        if len(df_floor) == 0: continue
-
-        # Histórico (Últimos 30 dias)
-        historical = []
-        for _, row in df_floor.tail(30).iterrows():
-            d_str = row['data'].strftime('%Y-%m-%d')
-            if d_str in HOLIDAYS: continue
-            historical.append({
-                'date': d_str,
-                'dayOfWeek': generator.day_names[row['data'].dayofweek],
-                'ocupacao': int(row['total_pessoas']),
-                'hierarchy': hierarchy_by_floor.get(floor_id, {}).get(d_str, {})
-            })
-
-        # Estado Atual (Para lags do ML)
-        ref_data = df_floor[df_floor['data'] == last_data_date]
-        last_row = ref_data.iloc[-1] if len(ref_data) > 0 else df_floor.iloc[-1]
-        
-        current_occupancy = int(last_row['total_pessoas'])
-        # Recupera lags se existirem, senão usa valor atual
-        lag_1 = float(last_row['total_pessoas'])
-        lag_2 = float(last_row.get('lag_1d', lag_1))
-        lag_7 = float(last_row.get('lag_7d', lag_1))
-        roll_7 = float(last_row.get('rolling_7d', lag_1))
-
-        # --- O CORAÇÃO DO ML (Previsão para 10 dias) ---
-        forecast_days = []
-        business_days = generator.next_business_days(today_ref, n_days=10)
-        
-        for future_date in business_days:
-            dia_sem = future_date.weekday()
-            media_dia = floor_profiles.get(floor_id, {}).get(dia_sem, 0)
-
-            # Monta features para o modelo
-            input_data = pd.DataFrame([{
-                'dia_semana': dia_sem,
-                'mes': future_date.month,
-                'lag_1d': lag_1,
-                'lag_2d': lag_2,
-                'lag_7d': lag_7,
-                'rolling_7d': roll_7,
-                'media_dia_semana': media_dia
-            }])
-
-            # Predição
-            try:
-                raw_pred = float(max(0, model.predict(input_data)[0]))
-                pred = raw_pred * c_factor
-                
-                # Suavização conservadora
-                if media_dia > 0 and pred > media_dia * 1.5:
-                    pred = (pred + media_dia) / 2
-                
-                final_val = int(round(pred))
-            except:
-                final_val = int(media_dia) # Fallback seguro
-                pred = media_dia
-
-            forecast_days.append({
-                'date': future_date.strftime('%Y-%m-%d'),
-                'dayOfWeek': generator.day_names[dia_sem],
-                'predictedCount': final_val
-            })
-
-            # Atualiza lags para o próximo loop (feedback loop)
-            lag_2, lag_1 = lag_1, pred
-            roll_7 = (roll_7 * 6 + pred) / 7
-
-        # --- MONTAGEM DO OBJETO DO ANDAR ---
-        if b_key not in output:
-            output[b_key] = {
-                'name': b_name,
-                'floors': {}
-            }
-        
-        # Capacidade e Dados Oficiais
-        capacity = CAPACITY_DB.get(floor_id, 100)
-        stats_obj = stored_metrics.get(floor_id, {})
-        stats_obj['capacity'] = int(capacity)
-        stats_obj['hierarchy_ratios'] = ratios_map.get(floor_id, {})
-        
-        # INJEÇÃO CRÍTICA DO DADO OFICIAL
-        stats_obj['official_headcount'] = official_data.get(floor_id, {})
-
-        output[b_key]['floors'][f_label] = {
-            'floor_number': f_label,
-            'current_ocupacao': current_occupancy,
-            'historical': historical,
-            'forecast': forecast_days,
-            'stats': stats_obj
-        }
-        processed += 1
-
-    print(f" ✓ {processed} andares processados e previstos.")
-
-    # --- [6/7] HIERARQUIA GLOBAL (Restaurado da V13) ---
-    print("\n[6/7] Adicionando hierarquia global...")
-    hierarchy_history = {}
-    for _, row in df_hier.iterrows():
-        date_str = row['data'].strftime('%Y-%m-%d')
-        if date_str in HOLIDAYS: continue
-        floor_id = row['floor_id']
-        h4, h5, h6 = row['h4'], row['h5'], row['h6']
-        pessoas = int(row['pessoas'])
-        
-        for level, vals, prefix in [(['h4'], [h4], 'H4'), (['h4', 'h5'], [h4, h5], 'H5'), (['h4', 'h5', 'h6'], [h4, h5, h6], 'H6')]:
-            if all(v != 'NAO_IDENTIFICADO' for v in vals):
-                key = f"{prefix}:{('\n'.join(vals))}"
-                if key not in hierarchy_history: hierarchy_history[key] = {}
-                if date_str not in hierarchy_history[key]: hierarchy_history[key][date_str] = {}
-                if floor_id not in hierarchy_history[key][date_str]: hierarchy_history[key][date_str][floor_id] = 0
-                hierarchy_history[key][date_str][floor_id] += pessoas
-    print(f" ✓ {len(hierarchy_history)} chaves hierárquicas processadas.")
-
-    # --- [7/7] JSON FINAL ---
-    print("\n[7/7] Montando JSON final...")
-    final_json = {
-        "buildings": output,
-        "hierarchy_menu": menu_tree,
-        "hierarchy_history": hierarchy_history, 
-        "metadata": {
-            "reference_date": today_ref.strftime('%Y-%m-%d'),
-            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "data_source": "REAL"
-        }
-    }
+    -- !!! FILTRO DE EXCLUSÃO (LIMPEZA) !!!
+    AND UPPER(descricao_polo_administrativo) NOT LIKE '%WTORRE%'
+    AND UPPER(descricao_predio_administrativo) NOT LIKE '%WTORRE%'
+    AND UPPER(descricao_local_departamento) NOT LIKE '%WTORRE%'
     
-    with open('predicoes.json', 'w', encoding='utf-8') as f:
-        json.dump(final_json, f, indent=2, ensure_ascii=False)
-    print(" ✅ JSON salvo: predicoes.json")
-    print("="*60 + "\n✅ PROCESSO CONCLUÍDO COM SUCESSO!\n" + "="*60)
+    -- SEUS FILTROS DE PRÉDIOS (MANTIDOS)
+    AND (
+        UPPER(descricao_polo_administrativo) LIKE '%ACO%' OR
+        UPPER(descricao_polo_administrativo) LIKE '%TECNOLOGICO%' OR
+        UPPER(descricao_polo_administrativo) LIKE '%3400%' OR
+        UPPER(descricao_polo_administrativo) LIKE '%3500%' OR
+        UPPER(descricao_local_departamento) LIKE '%CONCEICAO%' OR
+        UPPER(descricao_local_departamento) LIKE '%JABAQUARA%' OR
+        UPPER(descricao_local_departamento) LIKE '%ALFREDO EGYDIO%' OR
+        UPPER(descricao_local_departamento) LIKE '%WALTER MOREIRA%' OR
+        UPPER(descricao_local_departamento) LIKE '%OLAVO SETUBAL%' OR
+        UPPER(descricao_local_departamento) LIKE '%EUDORO VILLELA%'
+    )
 
-if __name__ == "__main__":
-    generate_predictions()
+GROUP BY 
+    nome_completo_departamento_hierarquia_4,
+    nome_completo_departamento_hierarquia_5,
+    descricao_polo_administrativo,
+    descricao_local_departamento;
