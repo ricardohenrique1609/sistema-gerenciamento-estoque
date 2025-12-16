@@ -1,35 +1,40 @@
 SELECT 
-    descricao_polo_administrativo,
-    COUNT(*) as total_pessoas
+    nome_completo_departamento_hierarquia_4 AS h5_superintendencia,
+    nome_completo_departamento_hierarquia_5 AS h6_gerencia,
+    descricao_polo_administrativo AS polo,
+    descricao_local_departamento AS local_completo,
+    COUNT(DISTINCT codigo_racf) AS total_oficial
 FROM 
     db_corp_rh_analyticsapreports_spec_01.hub_people_analytics_colaborador
 WHERE 
     texto_cidade_local_departamento = 'SAO PAULO'
+    AND situacao_colaborador = 'ATIVO'
     
-    -- Filtro de Data (Mantido para pegar o retrato atual)
+    -- Filtro de Data (Essencial)
     AND data_referencia = (
         SELECT MAX(data_referencia) 
         FROM db_corp_rh_analyticsapreports_spec_01.hub_people_analytics_colaborador
     )
 
-    -- Seus filtros atuais (Vamos testar o que eles trazem)
+    -- Limpeza de Polos Indesejados
+    AND descricao_polo_administrativo NOT LIKE '%WTORRE%'
+    AND descricao_polo_administrativo NOT LIKE '%SEM POLO%'
+    
+    -- Seus Filtros de Prédio
     AND (
-        UPPER(descricao_polo_administrativo) LIKE '%ACO%' OR
-        UPPER(descricao_polo_administrativo) LIKE '%TECNOLOGICO%' OR
-        UPPER(descricao_polo_administrativo) LIKE '%3400%' OR
-        UPPER(descricao_polo_administrativo) LIKE '%3500%' OR
-        
-        -- Atenção aqui: Como estamos filtrando por LOCAL também, 
-        -- pode ser que um polo "WTorre" entre se o local for "Conceição" (erro de cadastro)
-        UPPER(descricao_local_departamento) LIKE '%CONCEICAO%' OR
-        UPPER(descricao_local_departamento) LIKE '%JABAQUARA%' OR
-        UPPER(descricao_local_departamento) LIKE '%ALFREDO EGYDIO%' OR
-        UPPER(descricao_local_departamento) LIKE '%WALTER MOREIRA%' OR
-        UPPER(descricao_local_departamento) LIKE '%OLAVO SETUBAL%' OR
-        UPPER(descricao_local_departamento) LIKE '%EUDORO VILLELA%'
+        descricao_polo_administrativo LIKE '%ACO%' OR
+        descricao_polo_administrativo LIKE '%TECNOLOGICO%' OR
+        descricao_polo_administrativo LIKE '%3400%' OR
+        descricao_polo_administrativo LIKE '%3500%' OR
+        descricao_local_departamento LIKE '%CONCEICAO%' OR
+        descricao_local_departamento LIKE '%JABAQUARA%' OR
+        descricao_local_departamento LIKE '%ALFREDO EGYDIO%' OR
+        descricao_local_departamento LIKE '%WALTER MOREIRA%' OR
+        descricao_local_departamento LIKE '%OLAVO SETUBAL%' OR
+        descricao_local_departamento LIKE '%EUDORO VILLELA%'
     )
-
 GROUP BY 
-    descricao_polo_administrativo
-ORDER BY 
-    descricao_polo_administrativo;
+    nome_completo_departamento_hierarquia_4,
+    nome_completo_departamento_hierarquia_5,
+    descricao_polo_administrativo,
+    descricao_local_departamento;
