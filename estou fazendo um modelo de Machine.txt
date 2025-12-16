@@ -1,39 +1,26 @@
 SELECT 
-    -- Níveis Hierárquicos
-    nome_completo_departamento_hierarquia_4 AS h5_superintendencia,
-    nome_completo_departamento_hierarquia_5 AS h6_gerencia,
-    
-    -- Localização
-    descricao_polo_administrativo AS polo,
-    descricao_local_departamento AS local_completo,
-    
-    -- Contagem (Headcount Único Ativo HOJE)
-    COUNT(DISTINCT codigo_racf) AS total_oficial
-
+    descricao_polo_administrativo,
+    COUNT(*) as total_pessoas
 FROM 
     db_corp_rh_analyticsapreports_spec_01.hub_people_analytics_colaborador
-
 WHERE 
     texto_cidade_local_departamento = 'SAO PAULO'
-    AND situacao_colaborador = 'ATIVO'
     
-    -- !!! FILTRO CRUCIAL: PEGA APENAS A FOTO MAIS RECENTE !!!
+    -- Filtro de Data (Mantido para pegar o retrato atual)
     AND data_referencia = (
         SELECT MAX(data_referencia) 
         FROM db_corp_rh_analyticsapreports_spec_01.hub_people_analytics_colaborador
     )
 
-    -- !!! FILTRO DE EXCLUSÃO (LIMPEZA) !!!
-    AND UPPER(descricao_polo_administrativo) NOT LIKE '%WTORRE%'
-    AND UPPER(descricao_predio_administrativo) NOT LIKE '%WTORRE%'
-    AND UPPER(descricao_local_departamento) NOT LIKE '%WTORRE%'
-    
-    -- SEUS FILTROS DE PRÉDIOS (MANTIDOS)
+    -- Seus filtros atuais (Vamos testar o que eles trazem)
     AND (
         UPPER(descricao_polo_administrativo) LIKE '%ACO%' OR
         UPPER(descricao_polo_administrativo) LIKE '%TECNOLOGICO%' OR
         UPPER(descricao_polo_administrativo) LIKE '%3400%' OR
         UPPER(descricao_polo_administrativo) LIKE '%3500%' OR
+        
+        -- Atenção aqui: Como estamos filtrando por LOCAL também, 
+        -- pode ser que um polo "WTorre" entre se o local for "Conceição" (erro de cadastro)
         UPPER(descricao_local_departamento) LIKE '%CONCEICAO%' OR
         UPPER(descricao_local_departamento) LIKE '%JABAQUARA%' OR
         UPPER(descricao_local_departamento) LIKE '%ALFREDO EGYDIO%' OR
@@ -43,7 +30,6 @@ WHERE
     )
 
 GROUP BY 
-    nome_completo_departamento_hierarquia_4,
-    nome_completo_departamento_hierarquia_5,
-    descricao_polo_administrativo,
-    descricao_local_departamento;
+    descricao_polo_administrativo
+ORDER BY 
+    descricao_polo_administrativo;
