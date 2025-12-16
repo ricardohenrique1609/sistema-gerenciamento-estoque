@@ -1,10 +1,11 @@
 """
 ========================================
-GENERATE PREDICTIONS - V20 (PRODUCTION FULL)
+GENERATE PREDICTIONS - V21 (FULL EXTENDED)
 ========================================
-1. Lógica COMPLETA de ML (Previsões, Lags, Rolling Mean).
-2. Estrutura Hierárquica (H5/H6) corrigida para o Frontend Tetris.
-3. Regex robusto e Leitura de CSV Oficial.
+1. Lógica ML Completa (Igual V13 original).
+2. Histórico Global de Hierarquia (Restaurado).
+3. Correção para Space Tetris (H5/H6 e CSV Oficial).
+4. Regex Robusto e Capacidades Ajustáveis.
 ========================================
 """
 import pandas as pd
@@ -18,8 +19,17 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================================================
-# 1. CAPACIDADES (Ajuste aqui se os % estiverem errados)
+# 1. CONFIGURAÇÕES E CAPACIDADES
 # ============================================================================
+HOLIDAYS = [
+    '2024-01-01', '2024-01-25', '2024-02-12', '2024-02-13', '2024-03-29',
+    '2024-05-01', '2024-05-30', '2024-07-09', '2024-09-07', '2024-10-12',
+    '2024-11-02', '2024-11-15', '2024-11-20', '2024-12-25',
+    '2025-01-01', '2025-01-25', '2025-03-03', '2025-03-04', '2025-04-18',
+    '2025-04-21', '2025-05-01', '2025-06-19', '2025-07-09', '2025-09-07',
+    '2025-10-12', '2025-11-02', '2025-11-15', '2025-11-20', '2025-12-25'
+]
+
 CAPACITY_DB = {
     'conceicao_01': 208, 'conceicao_02': 180, 'conceicao_03': 184, 'conceicao_04': 194,
     'conceicao_05': 162, 'conceicao_06': 162, 'conceicao_07': 162, 'conceicao_08': 162,
@@ -52,15 +62,6 @@ CAPACITY_DB = {
     'cea_01': 450, 'cea_03': 461, 'cea_04': 294, 'cea_07': 592, 'cea_09': 165
 }
 
-HOLIDAYS = [
-    '2024-01-01', '2024-01-25', '2024-02-12', '2024-02-13', '2024-03-29',
-    '2024-05-01', '2024-05-30', '2024-07-09', '2024-09-07', '2024-10-12',
-    '2024-11-02', '2024-11-15', '2024-11-20', '2024-12-25',
-    '2025-01-01', '2025-01-25', '2025-03-03', '2025-03-04', '2025-04-18',
-    '2025-04-21', '2025-05-01', '2025-06-19', '2025-07-09', '2025-09-07',
-    '2025-10-12', '2025-11-02', '2025-11-15', '2025-11-20', '2025-12-25'
-]
-
 BUILDING_NAMES = {
     'conceicao': 'Torre Conceição', 'jabaquara': 'Torre Jabaquara',
     'walter_moreira': 'Torre Walter Moreira', 'olavo_setubal': 'Torre Olavo Setúbal',
@@ -92,8 +93,13 @@ class PredictionGenerator:
         return days
 
 def clean_floor_label(raw_label):
-    if '_' in str(raw_label): return raw_label.split('_')[-1].zfill(2)
-    return str(raw_label).zfill(2)
+    if '_' in str(raw_label):
+        parts = str(raw_label).split('_')
+        candidate = parts[-1]
+        if candidate.isdigit(): return f"{int(candidate):02d}"
+        return candidate.title()
+    if str(raw_label).isdigit(): return f"{int(raw_label):02d}"
+    return str(raw_label).title()
 
 def get_building_info(floor_id):
     parts = floor_id.split('_', 2)
@@ -106,7 +112,7 @@ def get_building_info(floor_id):
     return base_key, building_name
 
 # ============================================================================
-# 3. LEITURA DE HEADCOUNT OFICIAL (CORRIGIDA E ROBUSTA)
+# 3. LEITURA DE HEADCOUNT OFICIAL (CORRIGIDA)
 # ============================================================================
 def identify_floor_id_from_rh(polo, local):
     b_key = None
@@ -145,7 +151,7 @@ def load_official_headcount(csv_path='headcount_oficial.csv'):
         df.columns = df.columns.str.strip().str.lower()
         print(f"   ℹ️  Colunas lidas: {list(df.columns)}")
         
-        # MAPA HIERÁRQUICO (ESSENCIAL PARA O FRONTEND V19)
+        # MAPA HIERÁRQUICO (ESSENCIAL PARA O TETRIS)
         headcount_map = {} 
         
         for _, row in df.iterrows():
@@ -178,10 +184,10 @@ def load_official_headcount(csv_path='headcount_oficial.csv'):
 # 4. GERAÇÃO PRINCIPAL
 # ============================================================================
 def generate_predictions():
-    print("="*60 + "\n🔮 GERAÇÃO DE PREVISÕES - V20 (FULL PRODUCTION)\n" + "="*60)
+    print("="*70 + "\n🔮 GERAÇÃO DE PREVISÕES - V21 (FULL EXTENDED)\n" + "="*70)
 
-    # --- 1. CARREGA MODELOS E DADOS ML ---
-    print("\n[1/5] Carregando modelos...")
+    # --- [1/7] CARREGA MODELOS E DADOS ---
+    print("\n[1/7] Carregando modelos e dados...")
     try:
         data_pack = joblib.load('model_floors.pkl')
         models = data_pack['models']
@@ -209,8 +215,8 @@ def generate_predictions():
         print(f" ❌ ERRO: {e}")
         exit(1)
 
-    # --- 2. DEFINE DATA E PROCESSA HISTÓRICO ---
-    print("\n[2/5] Processando histórico...")
+    # --- [2/7] DEFINE DATA ---
+    print("\n[2/7] Definindo data de referência...")
     today_ref = pd.Timestamp(datetime.now().date())
     max_data_date = pd.to_datetime(df_ml['data']).max()
     last_data_date = min(max_data_date, today_ref)
@@ -219,7 +225,8 @@ def generate_predictions():
     df_ml = df_ml[df_ml['data'] <= today_ref].copy()
     df_hier = df_hier[df_hier['data'] <= today_ref].copy()
 
-    # Processa Hierarquia WiFi (Para a aba "Ocupação Real")
+    # --- [3/7] PROCESSA HISTÓRICO HIERARQUIA (POR ANDAR) ---
+    print("\n[3/7] Processando histórico de hierarquia (Local)...")
     hierarchy_by_floor = {}
     for _, row in df_hier.iterrows():
         date_str = row['data'].strftime('%Y-%m-%d')
@@ -236,12 +243,15 @@ def generate_predictions():
                 if key not in hierarchy_by_floor[fid][date_str]: hierarchy_by_floor[fid][date_str][key] = 0
                 hierarchy_by_floor[fid][date_str][key] += int(row['pessoas'])
 
-    # --- 3. GERAÇÃO DE PREVISÕES ML + INTEGRAÇÃO RH ---
-    print("\n[3/5] Gerando previsões e integrando dados...")
+    # --- [4/7] INICIALIZAÇÃO ---
+    print("\n[4/7] Inicializando estruturas...")
     output = {}
     generator = PredictionGenerator()
     processed = 0
 
+    # --- [5/7] GERAÇÃO DE PREVISÕES ML + INTEGRAÇÃO RH ---
+    print("\n[5/7] Gerando previsões...")
+    
     for floor_id, model in models.items():
         b_key, b_name = get_building_info(floor_id)
         f_label = clean_floor_label(floor_id)
@@ -267,6 +277,7 @@ def generate_predictions():
         last_row = ref_data.iloc[-1] if len(ref_data) > 0 else df_floor.iloc[-1]
         
         current_occupancy = int(last_row['total_pessoas'])
+        # Recupera lags se existirem, senão usa valor atual
         lag_1 = float(last_row['total_pessoas'])
         lag_2 = float(last_row.get('lag_1d', lag_1))
         lag_7 = float(last_row.get('lag_7d', lag_1))
@@ -342,8 +353,27 @@ def generate_predictions():
 
     print(f" ✓ {processed} andares processados e previstos.")
 
-    # --- 4. JSON FINAL ---
-    print("\n[4/5] Salvando JSON...")
+    # --- [6/7] HIERARQUIA GLOBAL (Restaurado da V13) ---
+    print("\n[6/7] Adicionando hierarquia global...")
+    hierarchy_history = {}
+    for _, row in df_hier.iterrows():
+        date_str = row['data'].strftime('%Y-%m-%d')
+        if date_str in HOLIDAYS: continue
+        floor_id = row['floor_id']
+        h4, h5, h6 = row['h4'], row['h5'], row['h6']
+        pessoas = int(row['pessoas'])
+        
+        for level, vals, prefix in [(['h4'], [h4], 'H4'), (['h4', 'h5'], [h4, h5], 'H5'), (['h4', 'h5', 'h6'], [h4, h5, h6], 'H6')]:
+            if all(v != 'NAO_IDENTIFICADO' for v in vals):
+                key = f"{prefix}:{('\n'.join(vals))}"
+                if key not in hierarchy_history: hierarchy_history[key] = {}
+                if date_str not in hierarchy_history[key]: hierarchy_history[key][date_str] = {}
+                if floor_id not in hierarchy_history[key][date_str]: hierarchy_history[key][date_str][floor_id] = 0
+                hierarchy_history[key][date_str][floor_id] += pessoas
+    print(f" ✓ {len(hierarchy_history)} chaves hierárquicas processadas.")
+
+    # --- [7/7] JSON FINAL ---
+    print("\n[7/7] Montando JSON final...")
     final_json = {
         "buildings": output,
         "hierarchy_menu": menu_tree,
